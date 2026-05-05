@@ -21,10 +21,11 @@ CREDS_PATH_LOCAL = Path(__file__).parent.parent / "credentials.json"
 
 
 def _resolve_creds_path() -> Path | None:
+    # Always ensure the folder exists so the user can drop the file there
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if CREDS_PATH.exists():
         return CREDS_PATH
     if CREDS_PATH_LOCAL.exists():
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         import shutil
         shutil.copy(CREDS_PATH_LOCAL, CREDS_PATH)
         return CREDS_PATH
