@@ -242,9 +242,9 @@ class CheckListView(Widget):
     Space also toggles (key bubbles up from ListView which doesn't consume it).
     """
 
-    def __init__(self, items: list[tuple[str, str, bool]]) -> None:
+    def __init__(self, items: list[tuple[str, str, bool]], **kwargs) -> None:
         """items: list of (display_label, value, initial_checked)"""
-        super().__init__()
+        super().__init__(**kwargs)
         self._items = items
 
     def compose(self) -> ComposeResult:
