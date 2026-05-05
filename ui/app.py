@@ -783,6 +783,7 @@ class NewsletterListScreen(Screen):
                     id="list-select-row",
                 ),
                 Button("Next  →", id="btn-unsub", variant="success", classes="btn-full"),
+                Button("← Back", id="btn-back", variant="default", classes="btn-full"),
                 id="list-actions",
             ),
         )
@@ -801,6 +802,10 @@ class NewsletterListScreen(Screen):
     @on(Button.Pressed, "#btn-none")
     def deselect_all(self) -> None:
         self.query_one(CheckListView).deselect_all()
+
+    @on(Button.Pressed, "#btn-back")
+    def handle_back(self) -> None:
+        self.app.pop_screen()
 
     @on(Button.Pressed, "#btn-unsub")
     def handle_unsub(self) -> None:
