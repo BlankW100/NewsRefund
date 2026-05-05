@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Auth tokens — never commit these
+credentials.json
+token.json
+
+# OS
+.DS_Store
+Thumbs.db

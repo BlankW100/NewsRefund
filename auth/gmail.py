@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+# Read-only + send (needed for mailto: unsubscribe)
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+]
+
+CONFIG_DIR = Path.home() / ".newsrefund"
+TOKEN_PATH = CONFIG_DIR / "token.json"
+
+# User places their downloaded credentials.json here OR next to main.py
+CREDS_PATH = CONFIG_DIR / "credentials.json"
+CREDS_PATH_LOCAL = Path(__file__).parent.parent / "credentials.json"
+
+
+def _resolve_creds_path() -> Path | None:
+    if CREDS_PATH.exists():
+        return CREDS_PATH
+    if CREDS_PATH_LOCAL.exists():
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.copy(CREDS_PATH_LOCAL, CREDS_PATH)
+        return CREDS_PATH
+    return None
+
+
+def get_credentials() -> Credentials:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    creds = None
+
+    if TOKEN_PATH.exists():
+        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            creds_path = _resolve_creds_path()
+            if creds_path is None:
+                raise FileNotFoundError(
+                    "credentials.json not found.\n"
+                    f"Please place it in: {CONFIG_DIR}\n"
+                    "See the setup guide for instructions."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
+            # open_browser=True pops up the browser for the user automatically
+            creds = flow.run_local_server(port=0, open_browser=True)
+
+        with open(TOKEN_PATH, "w") as f:
+            f.write(creds.to_json())
+
+    return creds
+
+
+def is_authenticated() -> bool:
+    """Quick check — does a valid saved token exist?"""
+    if not TOKEN_PATH.exists():
+        return False
+    try:
+        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+        return bool(creds and creds.valid)
+    except Exception:
+        return False
+
+
+def logout() -> None:
+    if TOKEN_PATH.exists():
+        TOKEN_PATH.unlink()
+
+
+def has_credentials_file() -> bool:
+    return _resolve_creds_path() is not None
