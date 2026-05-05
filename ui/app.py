@@ -22,13 +22,7 @@ from textual.widgets import (
 )
 from textual.widgets.selection_list import Selection
 
-from auth.gmail import (
-    get_credentials,
-    has_credentials_file,
-    is_authenticated,
-    logout,
-    CONFIG_DIR,
-)
+from auth.gmail import get_credentials, is_authenticated, logout
 from scanner.detector import Newsletter, detect_newsletters
 from scanner.fetcher import build_service, fetch_email_headers
 from unsubscriber.handler import unsubscribe
@@ -96,12 +90,6 @@ Button {
 
 .btn-full {
     width: 100%;
-}
-
-/* ── Setup guide ───────────────────────────────────────────── */
-#guide-steps {
-    margin: 1 0;
-    color: #c0c0d0;
 }
 
 /* ── Scan screen ───────────────────────────────────────────── */
@@ -200,65 +188,14 @@ class WelcomeScreen(Screen):
 
     @on(Button.Pressed, "#btn-connect")
     def handle_connect(self) -> None:
-        if not has_credentials_file():
-            self.app.push_screen(SetupGuideScreen())
-        elif is_authenticated():
+        if is_authenticated():
             self.app.push_screen(ScanScreen())
         else:
             self.app.push_screen(AuthScreen())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Screen 2 — Setup guide (shown when credentials.json is missing)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class SetupGuideScreen(Screen):
-    def compose(self) -> ComposeResult:
-        steps = (
-            "Before connecting, you need a free Google API key.\n"
-            "This is a one-time setup — takes about 5 minutes.\n\n"
-            "Step 1.  Go to  console.cloud.google.com\n"
-            "Step 2.  Create a new project  (any name is fine)\n"
-            "Step 3.  Search for 'Gmail API' and click Enable\n"
-            "Step 4.  Go to  APIs & Services → Credentials\n"
-            "Step 5.  Click  Create Credentials → OAuth 2.0 Client ID\n"
-            "Step 6.  Choose  Desktop app,  click Create\n"
-            "Step 7.  Click  Download JSON  and save as  credentials.json\n"
-            f"Step 8.  Copy  credentials.json  into this folder:\n"
-            f"         {CONFIG_DIR}\n\n"
-            "Then come back here and click  Done, I placed the file."
-        )
-        yield Header(show_clock=False)
-        yield Center(
-            Container(
-                Label("One-time setup needed", classes="hero"),
-                Static(steps, id="guide-steps"),
-                Button("Done, I placed the file  →", id="btn-done", variant="success", classes="btn-full"),
-                Button("Go back", id="btn-back", variant="default", classes="btn-full"),
-                classes="card",
-            )
-        )
-        yield Footer()
-
-    @on(Button.Pressed, "#btn-done")
-    def handle_done(self) -> None:
-        if has_credentials_file():
-            self.app.switch_screen(AuthScreen())
-        else:
-            self.notify(
-                f"File not found yet — make sure it is named credentials.json and placed in:\n{CONFIG_DIR}",
-                title="File not found",
-                severity="warning",
-                timeout=6,
-            )
-
-    @on(Button.Pressed, "#btn-back")
-    def handle_back(self) -> None:
-        self.app.pop_screen()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Screen 3 — Auth (opens browser, waits for OAuth2)
+# Screen 2 — Auth (opens browser, waits for OAuth2)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class AuthScreen(Screen):

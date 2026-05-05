@@ -43,47 +43,26 @@ No technical knowledge required.
 
 
 ----------------------------------------------------
-  STEP 3 — Get your Google API key (first time only)
+  STEP 3 — Add your Gmail as a test user (first time only)
 ----------------------------------------------------
 
-NewsRefund needs a free key from Google so it can
-read your Gmail. Your emails never leave your computer.
+Before signing in for the first time, you need to
+allow your Gmail address to use the app.
 
 1. Go to:  https://console.cloud.google.com
    (Sign in with any Google account.)
 
-2. At the top, click "Select a project" then
-   "New Project". Give it any name and click Create.
+2. Make sure the NewsRefund project is selected
+   at the top of the page.
 
-3. In the search bar at the top, type:  Gmail API
-   Click on "Gmail API" then click "Enable".
-
-4. On the left menu, click:
-   APIs & Services  →  Credentials
-
-5. Click "Create Credentials"  →  "OAuth 2.0 Client ID"
-
-6. Under Application type, choose "Desktop app".
-   Click Create, then click OK.
-
-7. Find the credential you just created in the list.
-   Click the download icon (arrow pointing down).
-   This saves a file — rename it to:  credentials.json
-
-8. Move credentials.json into this folder:
-
-       C:\Users\yhwoo\.newsrefund\
-
-   (If the folder doesn't exist, create it.)
-
-9. Still in the Google Cloud Console, go to:
+3. On the left menu click:
    APIs & Services  →  OAuth consent screen
 
-10. Scroll down to "Test users" and click "Add Users".
-    Enter your Gmail address and click Save.
+4. Scroll down to "Test users" and click "Add Users".
 
-You only do Steps 3–10 once. After that the app
-remembers you.
+5. Enter your Gmail address and click Save.
+
+You only do this once per Gmail address.
 
 
 ----------------------------------------------------
@@ -106,7 +85,7 @@ remembers you.
 Welcome screen
   Click "Connect your Gmail account"
   Your browser will open a Google sign-in page.
-  Sign in and click Allow.
+  Choose your account and click Allow.
 
 Scanning screen
   The app checks your last 90 days of emails.
@@ -158,13 +137,9 @@ Summary screen
   TROUBLESHOOTING
 ----------------------------------------------------
 
-"credentials.json not found"
-  Make sure the file is named exactly credentials.json
-  and is placed in:  C:\Users\yhwoo\.newsrefund\
-
 "Access blocked" on the Google sign-in page
-  You need to add your Gmail as a test user.
-  Go back to Step 3, items 9 and 10.
+  Your Gmail address needs to be added as a test user.
+  Follow Step 3 above.
 
 The app window looks broken or very small
   Make your Command Prompt window bigger —
