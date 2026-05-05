@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -13,7 +14,8 @@ SCOPES = [
 ]
 
 CONFIG_DIR = Path.home() / ".newsrefund"
-TOKEN_PATH = CONFIG_DIR / "token.json"
+TOKEN_PATH   = CONFIG_DIR / "token.json"
+PROFILE_PATH = CONFIG_DIR / "profile.json"
 
 # User places their downloaded credentials.json here OR next to main.py
 CREDS_PATH = CONFIG_DIR / "credentials.json"
@@ -71,9 +73,37 @@ def is_authenticated() -> bool:
         return False
 
 
+def get_connected_email() -> str | None:
+    """
+    Return the Gmail address of the signed-in account, or None if not logged in.
+    Result is cached in profile.json so we don't call the API on every launch.
+    """
+    if not is_authenticated():
+        return None
+
+    if PROFILE_PATH.exists():
+        try:
+            return json.loads(PROFILE_PATH.read_text()).get("email")
+        except Exception:
+            pass
+
+    try:
+        from googleapiclient.discovery import build
+        creds = get_credentials()
+        service = build("gmail", "v1", credentials=creds)
+        profile = service.users().getProfile(userId="me").execute()
+        email: str = profile["emailAddress"]
+        PROFILE_PATH.write_text(json.dumps({"email": email}))
+        return email
+    except Exception:
+        return None
+
+
 def logout() -> None:
     if TOKEN_PATH.exists():
         TOKEN_PATH.unlink()
+    if PROFILE_PATH.exists():
+        PROFILE_PATH.unlink()
 
 
 def has_credentials_file() -> bool:

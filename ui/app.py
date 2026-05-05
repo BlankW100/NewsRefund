@@ -21,7 +21,7 @@ from textual.widgets import (
     Static,
 )
 
-from auth.gmail import get_credentials, is_authenticated, logout
+from auth.gmail import get_connected_email, get_credentials, is_authenticated, logout
 from scanner.detector import Newsletter, detect_newsletters
 from scanner.fetcher import build_service, fetch_email_headers
 from unsubscriber.handler import delete_newsletter_emails, unsubscribe
@@ -97,6 +97,13 @@ Button {
 #scan-opt-actions Button {
     width: 1fr;
 }
+/* ── Connected account label ───────────────────────────────── */
+#connected-label {
+    text-align: center;
+    color: #4ade80;
+    margin-top: 1;
+}
+
 /* ── Welcome action row ────────────────────────────────────── */
 #welcome-actions {
     height: auto;
@@ -151,6 +158,12 @@ CheckItem.is-checked > Label {
     background: #1a1d2e;
     border-top: solid #2d3250;
     height: auto;
+}
+#list-select-row {
+    height: auto;
+}
+#list-select-row Button {
+    width: 1fr;
 }
 
 /* ── Action select screen ──────────────────────────────────── */
@@ -487,6 +500,7 @@ class WelcomeScreen(Screen):
                     variant="success",
                     classes="btn-full",
                 ),
+                Label("", id="connected-label"),
                 Horizontal(
                     Button("Log Out", id="btn-logout", variant="default"),
                     Button("Exit", id="btn-exit", variant="default"),
@@ -499,6 +513,18 @@ class WelcomeScreen(Screen):
         )
         yield Footer()
 
+    def on_mount(self) -> None:
+        self._load_email()
+
+    @work(thread=True)
+    def _load_email(self) -> None:
+        email = get_connected_email()
+        self.app.call_from_thread(self._set_email, email)
+
+    def _set_email(self, email: str | None) -> None:
+        label = self.query_one("#connected-label", Label)
+        label.update(f"Now connected: {email}" if email else "")
+
     @on(Button.Pressed, "#btn-connect")
     def handle_connect(self) -> None:
         if is_authenticated():
@@ -509,6 +535,7 @@ class WelcomeScreen(Screen):
     @on(Button.Pressed, "#btn-logout")
     def handle_logout(self) -> None:
         logout()
+        self.query_one("#connected-label", Label).update("")
         self.notify("Logged out.", title="Logged out", timeout=3)
 
     @on(Button.Pressed, "#btn-exit")
@@ -548,6 +575,7 @@ class AuthScreen(Screen):
     def _run_oauth(self) -> None:
         try:
             get_credentials()
+            get_connected_email()          # fetch + cache email right after auth
             self.app.call_from_thread(self.app.switch_screen, ScanOptionsScreen())
         except Exception as exc:
             self.app.call_from_thread(self._show_error, str(exc))
@@ -732,11 +760,13 @@ class NewsletterListScreen(Screen):
                 [(self._item_label(n), n.domain, True) for n in self._newsletters],
                 id="newsletter-list",
             ),
-            Horizontal(
-                Button("Select all", id="btn-all", variant="default"),
-                Button("Deselect all", id="btn-none", variant="default"),
-                Static("  "),
-                Button("Next  →", id="btn-unsub", variant="success"),
+            Vertical(
+                Horizontal(
+                    Button("Select all", id="btn-all", variant="default"),
+                    Button("Deselect all", id="btn-none", variant="default"),
+                    id="list-select-row",
+                ),
+                Button("Next  →", id="btn-unsub", variant="success", classes="btn-full"),
                 id="list-actions",
             ),
         )
