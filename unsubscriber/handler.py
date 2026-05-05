@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 import base64
+import re
 from email.mime.text import MIMEText
 from typing import Literal
 
 import httpx
 
 from scanner.detector import Newsletter
+
+_SUCCESS_RE = re.compile(
+    r"(successfully\s+unsubscribed|you.ve been (removed|unsubscribed)|"
+    r"opted[\s\-]out|no longer (receive|get)|unsubscription\s+confirmed|"
+    r"removed from|you are (now\s+)?unsubscribed|has been removed)",
+    re.IGNORECASE,
+)
+
+_CONFIRM_RE = re.compile(
+    r"(click (here|to confirm|the (button|link))|please confirm|"
+    r"confirm (your|the) unsubscri|to (complete|finish) your unsubscri)",
+    re.IGNORECASE,
+)
 
 UnsubResult = Literal["success", "failed", "manual_required"]
 
@@ -58,9 +72,21 @@ async def _https_get(url: str) -> tuple[UnsubResult, str]:
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
             resp = await client.get(url)
-        if resp.status_code < 400:
+        if resp.status_code >= 400:
+            return "failed", f"Server returned {resp.status_code}"
+
+        body = resp.text
+        # Page explicitly confirms unsubscribe succeeded
+        if _SUCCESS_RE.search(body):
             return "success", "Unsubscribed (via link)"
-        return "failed", f"Server returned {resp.status_code}"
+        # Page has a confirmation form or asks user to click — GET alone isn't enough
+        if _CONFIRM_RE.search(body) or ("<form" in body.lower() and "unsubscrib" in body.lower()):
+            return "failed", "Unsubscribe page requires manual confirmation"
+        # Short / redirect response with no form — likely auto-processed
+        if len(body) < 5000:
+            return "success", "Unsubscribed (via link)"
+        # Long page with no clear success message — fall through to mailto
+        return "failed", "Could not confirm unsubscribe — no success message in response"
     except Exception as exc:
         return "failed", str(exc)
 

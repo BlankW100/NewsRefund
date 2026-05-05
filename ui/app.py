@@ -928,30 +928,44 @@ class SummaryScreen(Screen):
         manual    = [r for r in self._results if r[1] == "manual_required"]
         failed    = [r for r in self._results if r[1] == "failed"]
 
-        lines = []
-        if succeeded or manual or failed:
-            lines.append(f"  ✓  {len(succeeded)} unsubscribed successfully")
-        if self._deleted_count:
-            lines.append(f"  🗑  {self._deleted_count} emails deleted from inbox")
-        if manual:
-            lines.append(f"  !  {len(manual)} need manual action (open the email)")
-        if failed:
-            lines.append(f"  ✗  {len(failed)} failed")
-        if not lines:
-            lines.append("  Nothing was processed.")
+        def _row(nl: Newsletter, icon: str) -> str:
+            email = nl.sender_email if len(nl.sender_email) <= 35 else nl.sender_email[:32] + "..."
+            return f"  {icon}  {nl.sender_name:<25}  {email}"
 
-        manual_list = "\n".join(f"     • {r[0].sender_name}" for r in manual)
+        succeeded_rows = "\n".join(_row(r[0], "✓") for r in succeeded)
+        manual_rows    = "\n".join(_row(r[0], "!") for r in manual)
+        failed_rows    = "\n".join(_row(r[0], "✗") for r in failed)
+
+        counts = []
+        if succeeded:
+            counts.append(f"{len(succeeded)} unsubscribed")
+        if self._deleted_count:
+            counts.append(f"{self._deleted_count} emails deleted")
+        if manual:
+            counts.append(f"{len(manual)} need manual action")
+        if failed:
+            counts.append(f"{len(failed)} failed")
+        summary_line = "  " + "   ·   ".join(counts) if counts else "  Nothing was processed."
+
+        sections = []
+        if succeeded_rows:
+            sections.append("Unsubscribed:\n" + succeeded_rows)
+        if manual_rows:
+            sections.append("Need manual action (open the email and click Unsubscribe):\n" + manual_rows)
+        if failed_rows:
+            sections.append("Failed:\n" + failed_rows)
+        if self._deleted_count:
+            sections.append(f"Deleted {self._deleted_count} email{'s' if self._deleted_count != 1 else ''} from inbox")
+        detail_text = "\n\n".join(sections)
 
         yield Header(show_clock=False)
         yield Center(
             Container(
                 Label("All done!", classes="hero"),
                 Static(""),
-                Static("\n".join(lines), id="summary-stats"),
-                Static(
-                    ("\n\nManual unsubscribes needed:\n" + manual_list) if manual else "",
-                    classes="warning",
-                ),
+                Static(summary_line, id="summary-stats"),
+                Static(""),
+                Static(detail_text, id="summary-detail"),
                 Static(""),
                 Button("Scan again", id="btn-scan", variant="success", classes="btn-full"),
                 Button("Exit", id="btn-exit", variant="default", classes="btn-full"),
