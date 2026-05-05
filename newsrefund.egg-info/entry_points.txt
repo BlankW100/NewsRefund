@@ -1,0 +1,2 @@
+[console_scripts]
+newsrefund = main:main

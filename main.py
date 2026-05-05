@@ -1,4 +1,9 @@
 from ui.app import NewsRefundApp
 
-if __name__ == "__main__":
+
+def main() -> None:
     NewsRefundApp().run()
+
+
+if __name__ == "__main__":
+    main()

@@ -65,6 +65,36 @@ async def _https_get(url: str) -> tuple[UnsubResult, str]:
         return "failed", str(exc)
 
 
+def delete_newsletter_emails(domain: str, gmail_service, max_emails: int = 500) -> int:
+    """
+    Move all emails from a sender domain to Trash.
+    Returns the number of emails trashed.
+    """
+    query = f"from:@{domain}"
+    trashed = 0
+    page_token = None
+
+    while trashed < max_emails:
+        params: dict = {"userId": "me", "q": query, "maxResults": min(100, max_emails - trashed)}
+        if page_token:
+            params["pageToken"] = page_token
+
+        result = gmail_service.users().messages().list(**params).execute()
+        messages = result.get("messages", [])
+        if not messages:
+            break
+
+        for msg in messages:
+            gmail_service.users().messages().trash(userId="me", id=msg["id"]).execute()
+            trashed += 1
+
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+
+    return trashed
+
+
 def _send_mailto(mailto_uri: str, gmail_service) -> tuple[UnsubResult, str]:
     # Strip "mailto:" and any query string (e.g. ?subject=unsubscribe)
     address = mailto_uri.replace("mailto:", "").split("?")[0].strip()

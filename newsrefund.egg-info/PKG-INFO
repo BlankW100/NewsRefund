@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: newsrefund
+Version: 0.1.0
+Requires-Python: >=3.12
+Requires-Dist: google-auth>=2.29.0
+Requires-Dist: google-auth-oauthlib>=1.2.0
+Requires-Dist: google-api-python-client>=2.126.0
+Requires-Dist: textual>=0.70.0
+Requires-Dist: httpx>=0.27.0

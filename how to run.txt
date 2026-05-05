@@ -69,13 +69,29 @@ You only do this once per Gmail address.
   STEP 4 — Run the app
 ----------------------------------------------------
 
+First time only — activate the virtual environment:
+
 1. Open the newsrefund folder.
-2. Click the address bar, type  cmd  and press Enter.
+2. Click the address bar at the top of the window,
+   type  cmd  and press Enter.
 3. Type this and press Enter:
 
-       venv\Scripts\python main.py
+       venv\Scripts\activate
 
-4. The app opens in the terminal window.
+   You will see  (venv)  appear at the start of the
+   line. This only needs to be done once per session.
+
+4. Now type this and press Enter:
+
+       newsrefund
+
+   The app opens in the terminal window.
+
+   Every time after that (same terminal session):
+   Just type  newsrefund  and press Enter.
+
+   Next time you open a new terminal window:
+   Repeat steps 1–4.
 
 
 ----------------------------------------------------
