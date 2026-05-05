@@ -6,11 +6,10 @@ from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.containers import Center, Container, Horizontal, Vertical
 from textual.reactive import reactive
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import (
     Button,
-    Checkbox,
     Footer,
     Header,
     Input,
@@ -154,10 +153,50 @@ CheckItem.is-checked > Label {
     height: auto;
 }
 
-/* ── Delete checkbox ───────────────────────────────────────── */
-#cb-delete {
+/* ── Action select screen ──────────────────────────────────── */
+.action-card {
+    border: round #2d3250;
+    background: #0f1117;
+    padding: 1 2;
+    margin-bottom: 1;
+    height: auto;
+}
+.action-title {
+    text-style: bold;
+    color: #7ec8e3;
+}
+.action-desc {
+    color: #8888aa;
+    margin-bottom: 1;
+}
+
+/* ── Warning modal ─────────────────────────────────────────── */
+WarningModal {
+    align: center middle;
+}
+#modal-card {
+    width: 64;
+    height: auto;
+    border: round #f87171;
+    background: #1a1d2e;
+    padding: 2 4;
+}
+#modal-title {
+    text-align: center;
+    text-style: bold;
+    color: #f87171;
+    margin-bottom: 1;
+}
+#modal-body {
+    color: #c0c0d0;
+    margin-bottom: 1;
+}
+#modal-actions {
+    height: auto;
     margin-top: 1;
-    color: #fbbf24;
+}
+#modal-actions Button {
+    width: 1fr;
 }
 
 /* ── Scan screen ───────────────────────────────────────────── */
@@ -277,6 +316,154 @@ class CheckListView(Widget):
     @property
     def selected(self) -> list[str]:
         return [item.value for item in self.query(CheckItem) if item.checked]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Warning modal — reusable confirmation dialog
+# ─────────────────────────────────────────────────────────────────────────────
+
+class WarningModal(ModalScreen):
+    """Push this screen with push_screen_wait(); it dismisses with True/False."""
+
+    def __init__(self, title: str, body: str, confirm_label: str = "Yes, proceed") -> None:
+        super().__init__()
+        self._title = title
+        self._body = body
+        self._confirm_label = confirm_label
+
+    def compose(self) -> ComposeResult:
+        yield Container(
+            Label(self._title, id="modal-title"),
+            Static(self._body, id="modal-body"),
+            Horizontal(
+                Button(self._confirm_label, id="btn-modal-confirm", variant="error"),
+                Button("Cancel", id="btn-modal-cancel", variant="default"),
+                id="modal-actions",
+            ),
+            id="modal-card",
+        )
+
+    @on(Button.Pressed, "#btn-modal-confirm")
+    def handle_confirm(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#btn-modal-cancel")
+    def handle_cancel(self) -> None:
+        self.dismiss(False)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Action select screen — choose what to do with selected newsletters
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ActionSelectScreen(Screen):
+    def __init__(self, newsletters: list[Newsletter]) -> None:
+        super().__init__()
+        self._newsletters = newsletters
+
+    def compose(self) -> ComposeResult:
+        n = len(self._newsletters)
+        yield Header(show_clock=False)
+        yield Center(
+            Container(
+                Label(
+                    f"What to do with {n} newsletter{'s' if n != 1 else ''}?",
+                    classes="hero",
+                ),
+                Static(""),
+                Container(
+                    Label("Unsubscribe", classes="action-title"),
+                    Label(
+                        "Send unsubscribe requests to all selected senders.\n"
+                        "You may still receive emails for a few days while they process.",
+                        classes="action-desc",
+                    ),
+                    Button("Unsubscribe  →", id="btn-unsub", variant="warning", classes="btn-full"),
+                    classes="action-card",
+                ),
+                Container(
+                    Label("Delete Emails", classes="action-title"),
+                    Label(
+                        "Move all found emails from these senders to Trash.\n"
+                        "This does NOT stop future emails.",
+                        classes="action-desc",
+                    ),
+                    Button("Delete Emails  →", id="btn-delete", variant="warning", classes="btn-full"),
+                    classes="action-card",
+                ),
+                Container(
+                    Label("Unsubscribe + Delete", classes="action-title"),
+                    Label(
+                        "Unsubscribe from all selected senders AND delete every\n"
+                        "email found from them. The most thorough option.",
+                        classes="action-desc",
+                    ),
+                    Button("Unsubscribe + Delete  →", id="btn-both", variant="error", classes="btn-full"),
+                    classes="action-card",
+                ),
+                Button("← Back", id="btn-back", variant="default", classes="btn-full"),
+                classes="card",
+            )
+        )
+        yield Footer()
+
+    @on(Button.Pressed, "#btn-unsub")
+    async def handle_unsub(self) -> None:
+        n = len(self._newsletters)
+        confirmed = await self.app.push_screen_wait(
+            WarningModal(
+                title="Unsubscribe from newsletters?",
+                body=(
+                    f"You are about to send unsubscribe requests to {n} "
+                    f"sender{'s' if n != 1 else ''}.\n\n"
+                    "You may still receive emails for a few days while\n"
+                    "each sender processes your request."
+                ),
+                confirm_label="Yes, unsubscribe",
+            )
+        )
+        if confirmed:
+            self.app.switch_screen(UnsubscribingScreen(self._newsletters, mode="unsub"))
+
+    @on(Button.Pressed, "#btn-delete")
+    async def handle_delete(self) -> None:
+        n = len(self._newsletters)
+        confirmed = await self.app.push_screen_wait(
+            WarningModal(
+                title="Delete emails from these senders?",
+                body=(
+                    f"You are about to move all found emails from {n} "
+                    f"sender{'s' if n != 1 else ''} to Trash.\n\n"
+                    "Warning: This will NOT stop future emails.\n"
+                    "Trashed emails are permanently deleted after 30 days."
+                ),
+                confirm_label="Yes, delete emails",
+            )
+        )
+        if confirmed:
+            self.app.switch_screen(UnsubscribingScreen(self._newsletters, mode="delete"))
+
+    @on(Button.Pressed, "#btn-both")
+    async def handle_both(self) -> None:
+        n = len(self._newsletters)
+        confirmed = await self.app.push_screen_wait(
+            WarningModal(
+                title="Unsubscribe + Delete?",
+                body=(
+                    f"You are about to:\n"
+                    f"  • Send unsubscribe requests to {n} sender{'s' if n != 1 else ''}\n"
+                    f"  • Delete all found emails from these senders\n\n"
+                    "This cannot be easily undone."
+                ),
+                confirm_label="Yes, do both",
+            )
+        )
+        if confirmed:
+            self.app.switch_screen(UnsubscribingScreen(self._newsletters, mode="both"))
+
+    @on(Button.Pressed, "#btn-back")
+    def handle_back(self) -> None:
+        self.app.pop_screen()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -549,7 +736,7 @@ class NewsletterListScreen(Screen):
                 Button("Select all", id="btn-all", variant="default"),
                 Button("Deselect all", id="btn-none", variant="default"),
                 Static("  "),
-                Button("Unsubscribe from selected  →", id="btn-unsub", variant="error"),
+                Button("Next  →", id="btn-unsub", variant="success"),
                 id="list-actions",
             ),
         )
@@ -577,58 +764,7 @@ class NewsletterListScreen(Screen):
             self.notify("Please select at least one newsletter first.", severity="warning")
             return
 
-        self.app.push_screen(ConfirmScreen(chosen))
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Screen 6 — Confirm
-# ─────────────────────────────────────────────────────────────────────────────
-
-class ConfirmScreen(Screen):
-    def __init__(self, newsletters: list[Newsletter]) -> None:
-        super().__init__()
-        self._newsletters = newsletters
-
-    def compose(self) -> ComposeResult:
-        n = len(self._newsletters)
-        names = "\n".join(f"  • {nl.sender_name}" for nl in self._newsletters[:10])
-        more = f"\n  … and {n - 10} more" if n > 10 else ""
-
-        yield Header(show_clock=False)
-        yield Center(
-            Container(
-                Label(f"Unsubscribe from {n} newsletter{'s' if n != 1 else ''}?", classes="hero"),
-                Static(""),
-                Static(names + more),
-                Static(""),
-                Checkbox(
-                    "Also delete all emails from these senders  (frees up inbox space)",
-                    id="cb-delete",
-                    value=False,
-                ),
-                Static(""),
-                Label("This cannot be undone.", classes="warning"),
-                Static(""),
-                Button(
-                    f"Yes, unsubscribe from all {n}  →",
-                    id="btn-confirm",
-                    variant="error",
-                    classes="btn-full",
-                ),
-                Button("Cancel — go back", id="btn-cancel", variant="default", classes="btn-full"),
-                classes="card",
-            )
-        )
-        yield Footer()
-
-    @on(Button.Pressed, "#btn-confirm")
-    def handle_confirm(self) -> None:
-        delete = self.query_one("#cb-delete", Checkbox).value
-        self.app.switch_screen(UnsubscribingScreen(self._newsletters, delete_emails=delete))
-
-    @on(Button.Pressed, "#btn-cancel")
-    def handle_cancel(self) -> None:
-        self.app.pop_screen()
+        self.app.push_screen(ActionSelectScreen(chosen))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -636,10 +772,18 @@ class ConfirmScreen(Screen):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class UnsubscribingScreen(Screen):
-    def __init__(self, newsletters: list[Newsletter], delete_emails: bool = False) -> None:
+    """mode: 'unsub' | 'delete' | 'both'"""
+
+    _TITLES = {
+        "unsub":   "Unsubscribing…",
+        "delete":  "Deleting emails…",
+        "both":    "Unsubscribing and deleting…",
+    }
+
+    def __init__(self, newsletters: list[Newsletter], mode: str = "unsub") -> None:
         super().__init__()
         self._newsletters = newsletters
-        self._delete_emails = delete_emails
+        self._mode = mode
 
     def compose(self) -> ComposeResult:
         total = len(self._newsletters)
@@ -647,7 +791,7 @@ class UnsubscribingScreen(Screen):
         yield Vertical(
             Center(
                 Container(
-                    Label("Unsubscribing…", classes="hero"),
+                    Label(self._TITLES[self._mode], classes="hero"),
                     ProgressBar(total=total, show_eta=False, id="unsub-bar"),
                     Label("", id="unsub-status"),
                     classes="card",
@@ -674,11 +818,12 @@ class UnsubscribingScreen(Screen):
             for nl in self._newsletters:
                 self.app.call_from_thread(self._update_status, nl.sender_name)
 
-                result, msg = loop.run_until_complete(unsubscribe(nl, service))
-                results.append((nl, result, msg))
-                self.app.call_from_thread(self._log_result, nl, result, msg)
+                if self._mode in ("unsub", "both"):
+                    result, msg = loop.run_until_complete(unsubscribe(nl, service))
+                    results.append((nl, result, msg))
+                    self.app.call_from_thread(self._log_result, nl, result, msg)
 
-                if self._delete_emails:
+                if self._mode in ("delete", "both"):
                     self.app.call_from_thread(
                         self._log_plain, f"  🗑  Deleting emails from {nl.sender_name}…"
                     )
@@ -731,13 +876,17 @@ class SummaryScreen(Screen):
         manual    = [r for r in self._results if r[1] == "manual_required"]
         failed    = [r for r in self._results if r[1] == "failed"]
 
-        lines = [f"  ✓  {len(succeeded)} unsubscribed successfully"]
+        lines = []
+        if succeeded or manual or failed:
+            lines.append(f"  ✓  {len(succeeded)} unsubscribed successfully")
         if self._deleted_count:
             lines.append(f"  🗑  {self._deleted_count} emails deleted from inbox")
         if manual:
             lines.append(f"  !  {len(manual)} need manual action (open the email)")
         if failed:
             lines.append(f"  ✗  {len(failed)} failed")
+        if not lines:
+            lines.append("  Nothing was processed.")
 
         manual_list = "\n".join(f"     • {r[0].sender_name}" for r in manual)
 
