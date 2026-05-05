@@ -1,0 +1,178 @@
+====================================================
+  NewsRefund — How to Run
+====================================================
+
+This guide walks you through everything from scratch.
+No technical knowledge required.
+
+
+----------------------------------------------------
+  STEP 1 — Install Python
+----------------------------------------------------
+
+1. Go to:  https://www.python.org/downloads/
+2. Click the big yellow "Download Python" button.
+3. Run the installer.
+
+   IMPORTANT: On the first screen of the installer,
+   tick the box that says "Add Python to PATH"
+   before clicking Install Now.
+
+4. When it's done, click Close.
+
+
+----------------------------------------------------
+  STEP 2 — Set up the project (first time only)
+----------------------------------------------------
+
+1. Open the newsrefund folder (where this file is).
+2. Click the address bar at the top of the window
+   and type:  cmd   then press Enter.
+   (This opens a black Command Prompt window.)
+
+3. Type this and press Enter:
+
+       python -m venv venv
+
+4. Then type this and press Enter:
+
+       venv\Scripts\pip install -r requirements.txt
+
+   Wait for it to finish — it downloads a few packages.
+   This only needs to be done once.
+
+
+----------------------------------------------------
+  STEP 3 — Get your Google API key (first time only)
+----------------------------------------------------
+
+NewsRefund needs a free key from Google so it can
+read your Gmail. Your emails never leave your computer.
+
+1. Go to:  https://console.cloud.google.com
+   (Sign in with any Google account.)
+
+2. At the top, click "Select a project" then
+   "New Project". Give it any name and click Create.
+
+3. In the search bar at the top, type:  Gmail API
+   Click on "Gmail API" then click "Enable".
+
+4. On the left menu, click:
+   APIs & Services  →  Credentials
+
+5. Click "Create Credentials"  →  "OAuth 2.0 Client ID"
+
+6. Under Application type, choose "Desktop app".
+   Click Create, then click OK.
+
+7. Find the credential you just created in the list.
+   Click the download icon (arrow pointing down).
+   This saves a file — rename it to:  credentials.json
+
+8. Move credentials.json into this folder:
+
+       C:\Users\yhwoo\.newsrefund\
+
+   (If the folder doesn't exist, create it.)
+
+9. Still in the Google Cloud Console, go to:
+   APIs & Services  →  OAuth consent screen
+
+10. Scroll down to "Test users" and click "Add Users".
+    Enter your Gmail address and click Save.
+
+You only do Steps 3–10 once. After that the app
+remembers you.
+
+
+----------------------------------------------------
+  STEP 4 — Run the app
+----------------------------------------------------
+
+1. Open the newsrefund folder.
+2. Click the address bar, type  cmd  and press Enter.
+3. Type this and press Enter:
+
+       venv\Scripts\python main.py
+
+4. The app opens in the terminal window.
+
+
+----------------------------------------------------
+  USING THE APP
+----------------------------------------------------
+
+Welcome screen
+  Click "Connect your Gmail account"
+  Your browser will open a Google sign-in page.
+  Sign in and click Allow.
+
+Scanning screen
+  The app checks your last 90 days of emails.
+  Usually done in under 30 seconds.
+
+Newsletter list
+  Every newsletter found is shown with a checkbox.
+  All are ticked by default.
+
+  Space bar    — tick / untick the highlighted item
+  Arrow keys   — move up and down the list
+  Mouse click  — also works for ticking
+
+  Buttons at the bottom:
+    Select all     — tick everything
+    Deselect all   — untick everything
+    Unsubscribe    — proceed with the ticked ones
+
+Confirm screen
+  Review the list one more time.
+  Click "Yes, unsubscribe" to go ahead,
+  or "Cancel" to go back and change your picks.
+
+Progress screen
+  The app unsubscribes one by one.
+  Each line shows:
+    checkmark  —  done automatically
+    !          —  needs you to click unsubscribe
+                  manually inside the email
+    x          —  something went wrong
+
+Summary screen
+  Shows the final count.
+  Any newsletters marked "!" are ones where the
+  sender did not include an automatic unsubscribe
+  link — you will need to open one of their emails
+  and click Unsubscribe yourself.
+
+
+----------------------------------------------------
+  KEYBOARD SHORTCUTS
+----------------------------------------------------
+
+  Q          Quit the app
+  Ctrl + L   Log out (clears your saved login)
+
+
+----------------------------------------------------
+  TROUBLESHOOTING
+----------------------------------------------------
+
+"credentials.json not found"
+  Make sure the file is named exactly credentials.json
+  and is placed in:  C:\Users\yhwoo\.newsrefund\
+
+"Access blocked" on the Google sign-in page
+  You need to add your Gmail as a test user.
+  Go back to Step 3, items 9 and 10.
+
+The app window looks broken or very small
+  Make your Command Prompt window bigger —
+  drag the corners to make it fill the screen.
+
+Nothing happens after clicking Allow in the browser
+  Close the browser tab, go back to the app
+  and try connecting again.
+
+
+====================================================
