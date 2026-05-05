@@ -13,6 +13,7 @@ from textual.widgets import (
     Checkbox,
     Footer,
     Header,
+    Input,
     Label,
     ListItem,
     ListView,
@@ -78,9 +79,32 @@ Button {
 }
 
 /* ── Scan options ──────────────────────────────────────────── */
-.days-btn {
+#days-input {
     width: 100%;
+    margin: 1 0;
+}
+#quick-row {
+    height: auto;
+    margin-bottom: 1;
+}
+.quick-btn {
+    margin: 0 1 0 0;
+    min-width: 12;
+}
+#scan-opt-actions {
+    height: auto;
     margin-top: 1;
+}
+#scan-opt-actions Button {
+    width: 1fr;
+}
+/* ── Welcome action row ────────────────────────────────────── */
+#welcome-actions {
+    height: auto;
+    margin-top: 1;
+}
+#welcome-actions Button {
+    width: 1fr;
 }
 
 /* ── Custom checklist ──────────────────────────────────────── */
@@ -276,6 +300,11 @@ class WelcomeScreen(Screen):
                     variant="success",
                     classes="btn-full",
                 ),
+                Horizontal(
+                    Button("Log Out", id="btn-logout", variant="default"),
+                    Button("Exit", id="btn-exit", variant="default"),
+                    id="welcome-actions",
+                ),
                 Static(""),
                 Label("Your email data never leaves your computer.", classes="hint"),
                 classes="card",
@@ -289,6 +318,15 @@ class WelcomeScreen(Screen):
             self.app.push_screen(ScanOptionsScreen())
         else:
             self.app.push_screen(AuthScreen())
+
+    @on(Button.Pressed, "#btn-logout")
+    def handle_logout(self) -> None:
+        logout()
+        self.notify("Logged out.", title="Logged out", timeout=3)
+
+    @on(Button.Pressed, "#btn-exit")
+    def handle_exit(self) -> None:
+        self.app.exit()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -336,15 +374,14 @@ class AuthScreen(Screen):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Screen 3 — Scan options (pick how many days)
+# Screen 3 — Scan options (type days + quick picks)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_DAY_OPTIONS: list[tuple[str, int, bool]] = [
-    ("Last 30 days   — quick scan, recent emails only", 30, False),
-    ("Last 60 days", 60, False),
-    ("Last 90 days   — recommended", 90, True),
-    ("Last 6 months  — thorough", 180, False),
-    ("Last year      — most complete, takes longer", 365, False),
+_QUICK_PICKS: list[tuple[str, int]] = [
+    ("30 days", 30),
+    ("90 days ★", 90),
+    ("6 months", 180),
+    ("1 year", 365),
 ]
 
 
@@ -355,29 +392,59 @@ class ScanOptionsScreen(Screen):
             Container(
                 Label("How far back should we check?", classes="hero"),
                 Label(
-                    "Choose the time range for scanning your inbox.",
+                    "Type the number of days, or use a quick pick below.",
                     classes="body-text",
                 ),
                 Static(""),
-                *[
-                    Button(
-                        label,
-                        id=f"days-{days}",
-                        variant="success" if recommended else "default",
-                        classes="days-btn",
-                    )
-                    for label, days, recommended in _DAY_OPTIONS
-                ],
+                Input(placeholder="e.g. 90", id="days-input"),
+                Static(""),
+                Label("Quick picks:", classes="hint"),
+                Horizontal(
+                    *[
+                        Button(label, id=f"quick-{days}", classes="quick-btn",
+                               variant="success" if days == 90 else "default")
+                        for label, days in _QUICK_PICKS
+                    ],
+                    id="quick-row",
+                ),
+                Horizontal(
+                    Button("← Back", id="btn-back", variant="default"),
+                    Button("Start Scanning →", id="btn-start", variant="success"),
+                    id="scan-opt-actions",
+                ),
                 classes="card",
             )
         )
         yield Footer()
 
     @on(Button.Pressed)
-    def handle_days(self, event: Button.Pressed) -> None:
-        mapping = {f"days-{d}": d for _, d, _ in _DAY_OPTIONS}
-        if event.button.id in mapping:
-            self.app.switch_screen(ScanScreen(days=mapping[event.button.id]))
+    def handle_button(self, event: Button.Pressed) -> None:
+        quick = {f"quick-{days}": days for _, days in _QUICK_PICKS}
+        if event.button.id in quick:
+            self.query_one("#days-input", Input).value = str(quick[event.button.id])
+        elif event.button.id == "btn-start":
+            self._start_scan()
+        elif event.button.id == "btn-back":
+            self.app.pop_screen()
+
+    @on(Input.Submitted, "#days-input")
+    def handle_enter(self) -> None:
+        self._start_scan()
+
+    def _start_scan(self) -> None:
+        raw = self.query_one("#days-input", Input).value.strip()
+        try:
+            days = int(raw)
+            if not 1 <= days <= 3650:
+                raise ValueError
+        except ValueError:
+            self.notify(
+                "Please enter a whole number between 1 and 3650.",
+                severity="warning",
+                timeout=4,
+            )
+            return
+        self.app.switch_screen(ScanScreen(days=days))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
