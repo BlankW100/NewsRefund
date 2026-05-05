@@ -129,7 +129,7 @@ Summary screen
   KEYBOARD SHORTCUTS
 ----------------------------------------------------
 
-  Q          Quit the app
+  Ctrl + C   Quit the app
   Ctrl + L   Log out (clears your saved login)
 
 

@@ -560,7 +560,7 @@ class NewsRefundApp(App):
     CSS = CSS
     TITLE = "NewsRefund"
     BINDINGS = [
-        ("q", "quit", "Quit"),
+        ("ctrl+c", "quit", "Quit"),
         ("ctrl+l", "logout", "Log out"),
     ]
 
