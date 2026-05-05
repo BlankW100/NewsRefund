@@ -495,12 +495,20 @@ class WelcomeScreen(Screen):
                 ),
                 Static(""),
                 Button(
-                    "Connect your Gmail account  →",
-                    id="btn-connect",
+                    "Start  →",
+                    id="btn-start",
                     variant="success",
                     classes="btn-full",
                 ),
+                Static(""),
+                Button(
+                    "Connect your Gmail account  →",
+                    id="btn-connect",
+                    variant="primary",
+                    classes="btn-full",
+                ),
                 Label("", id="connected-label"),
+                Static(""),
                 Horizontal(
                     Button("Log Out", id="btn-logout", variant="default"),
                     Button("Exit", id="btn-exit", variant="default"),
@@ -523,19 +531,27 @@ class WelcomeScreen(Screen):
 
     def _set_email(self, email: str | None) -> None:
         label = self.query_one("#connected-label", Label)
-        label.update(f"Now connected: {email}" if email else "")
+        label.update(f"Connected: {email}" if email else "No account connected")
 
-    @on(Button.Pressed, "#btn-connect")
-    def handle_connect(self) -> None:
+    @on(Button.Pressed, "#btn-start")
+    def handle_start(self) -> None:
         if is_authenticated():
             self.app.push_screen(ScanOptionsScreen())
         else:
-            self.app.push_screen(AuthScreen())
+            self.notify(
+                "Please connect your Gmail account first using the button below.",
+                title="Not connected",
+                severity="warning",
+            )
+
+    @on(Button.Pressed, "#btn-connect")
+    def handle_connect(self) -> None:
+        self.app.push_screen(AuthScreen())
 
     @on(Button.Pressed, "#btn-logout")
     def handle_logout(self) -> None:
         logout()
-        self.query_one("#connected-label", Label).update("")
+        self.query_one("#connected-label", Label).update("No account connected")
         self.notify("Logged out.", title="Logged out", timeout=3)
 
     @on(Button.Pressed, "#btn-exit")
@@ -775,7 +791,8 @@ class NewsletterListScreen(Screen):
     @staticmethod
     def _item_label(n: Newsletter) -> str:
         method = f"[{n.method_label}]" if n.can_auto_unsubscribe else "[Manual]"
-        return f"{n.sender_name:<30}  {n.email_count:>3} emails   {method}"
+        email = n.sender_email if len(n.sender_email) <= 38 else n.sender_email[:35] + "..."
+        return f"{n.sender_name:<25}  {email:<38}  {n.email_count:>3} emails   {method}"
 
     @on(Button.Pressed, "#btn-all")
     def select_all(self) -> None:
