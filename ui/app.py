@@ -918,7 +918,7 @@ class WelcomeScreen(Screen):
         label.update(f"Connected: {email}" if email else "No account connected")
 
     @on(Button.Pressed, "#btn-start-algo")
-    async def handle_start_algo(self) -> None:
+    def handle_start_algo(self) -> None:
         if not is_authenticated():
             self.notify(
                 "Please connect your Gmail account first.",
@@ -926,6 +926,10 @@ class WelcomeScreen(Screen):
                 severity="warning",
             )
             return
+        self._confirm_algo_scan()
+
+    @work
+    async def _confirm_algo_scan(self) -> None:
         confirmed = await self.app.push_screen_wait(
             WarningModal(
                 title="Algorithm scan may miss some newsletters",
