@@ -18,6 +18,7 @@ from textual.widgets import (
     ListView,
     LoadingIndicator,
     ProgressBar,
+    RichLog,
     Static,
 )
 
@@ -252,10 +253,13 @@ ProgressBar {
 #progress-log {
     height: 1fr;
     border: round #2d3250;
-    padding: 1 2;
-    background: #1a1d2e;
-    overflow-y: auto;
-    margin: 1 2;
+    background: #07090f;
+    margin: 0 2 1 2;
+}
+#log-header {
+    padding: 0 2;
+    color: #555577;
+    margin: 1 2 0 2;
 }
 
 /* ── Summary ───────────────────────────────────────────────── */
@@ -940,8 +944,8 @@ class UnsubscribingScreen(Screen):
                     classes="card",
                 )
             ),
-            Static("Progress log:", classes="hint"),
-            Vertical(id="progress-log"),
+            Static("─── log ───────────────────────────────────────────────", id="log-header"),
+            RichLog(id="progress-log", markup=True, highlight=False, wrap=True),
         )
         yield Footer()
 
@@ -953,6 +957,9 @@ class UnsubscribingScreen(Screen):
         results: list[tuple[Newsletter, str, str]] = []
         deleted_count = 0
 
+        def log_cb(msg: str) -> None:
+            self.app.call_from_thread(self._log_terminal, msg)
+
         try:
             creds = get_credentials()
             service = build_service(creds)
@@ -960,26 +967,28 @@ class UnsubscribingScreen(Screen):
 
             for nl in self._newsletters:
                 self.app.call_from_thread(self._update_status, nl.sender_name)
+                self.app.call_from_thread(
+                    self._log_terminal, f"[bold cyan]── {nl.sender_name}[/bold cyan]"
+                )
 
                 if self._mode in ("unsub", "both"):
-                    result, msg = loop.run_until_complete(unsubscribe(nl, service))
+                    result, msg = loop.run_until_complete(
+                        unsubscribe(nl, service, log=log_cb)
+                    )
                     results.append((nl, result, msg))
                     self.app.call_from_thread(self._log_result, nl, result, msg)
 
                 if self._mode in ("delete", "both"):
-                    self.app.call_from_thread(
-                        self._log_plain, f"  🗑  Deleting emails from {nl.sender_name}…"
-                    )
-                    deleted = delete_newsletter_emails(nl.domain, service)
+                    deleted = delete_newsletter_emails(nl.domain, service, log=log_cb)
                     deleted_count += deleted
-                    self.app.call_from_thread(
-                        self._log_plain, f"     Deleted {deleted} email{'s' if deleted != 1 else ''}"
-                    )
 
             loop.close()
 
         except Exception as exc:
             results.append((Newsletter("", "", "", 0, ""), "failed", str(exc)))
+            self.app.call_from_thread(
+                self._log_terminal, f"[red]Error: {exc}[/red]"
+            )
 
         self.app.call_from_thread(
             self.app.switch_screen, SummaryScreen(results, deleted_count)
@@ -989,15 +998,19 @@ class UnsubscribingScreen(Screen):
         self.query_one("#unsub-bar", ProgressBar).advance(1)
         self.query_one("#unsub-status", Label).update(f"Working on: {name}")
 
-    def _log_result(self, nl: Newsletter, result: str, msg: str) -> None:
-        icon = "✓" if result == "success" else ("!" if result == "manual_required" else "✗")
-        css = "success" if result == "success" else ("warning" if result == "manual_required" else "error")
-        self.query_one("#progress-log").mount(
-            Label(f"  {icon}  {nl.sender_name}  —  {msg}", classes=css)
-        )
+    def _log_terminal(self, msg: str) -> None:
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.query_one("#progress-log", RichLog).write(f"[dim]{ts}[/dim]  {msg}")
 
-    def _log_plain(self, text: str) -> None:
-        self.query_one("#progress-log").mount(Label(text, classes="hint"))
+    def _log_result(self, nl: Newsletter, result: str, msg: str) -> None:
+        if result == "success":
+            line = f"[green]✓[/green]  [bold]{nl.sender_name}[/bold]  —  {msg}"
+        elif result == "manual_required":
+            line = f"[yellow]![/yellow]  [bold]{nl.sender_name}[/bold]  —  {msg}"
+        else:
+            line = f"[red]✗[/red]  [bold]{nl.sender_name}[/bold]  —  {msg}"
+        self.query_one("#progress-log", RichLog).write(line)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
