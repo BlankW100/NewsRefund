@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -15,6 +15,9 @@ class Newsletter:
     unsubscribe_mailto: Optional[str] = None
     unsubscribe_url: Optional[str] = None
     one_click_post: bool = False
+    label: str = "newsletter"   # "newsletter" | "spam" | "phishing"
+    label_reason: str = ""
+    sample_subjects: list[str] = field(default_factory=list)
 
     @property
     def can_auto_unsubscribe(self) -> bool:
@@ -117,6 +120,7 @@ def detect_newsletters(messages: list[dict]) -> list[Newsletter]:
 
         name, email, domain = _parse_sender(from_header)
         date = headers.get("date", "")
+        subject = headers.get("subject", "")
 
         mailto, url = None, None
         unsub_val = headers.get("list-unsubscribe", "")
@@ -135,6 +139,7 @@ def detect_newsletters(messages: list[dict]) -> list[Newsletter]:
                 "unsubscribe_mailto": mailto,
                 "unsubscribe_url": url,
                 "one_click_post": one_click,
+                "sample_subjects": [subject] if subject else [],
             }
         else:
             g = groups[domain]
@@ -146,6 +151,8 @@ def detect_newsletters(messages: list[dict]) -> list[Newsletter]:
                 g["unsubscribe_url"] = url
             if one_click:
                 g["one_click_post"] = True
+            if subject and len(g["sample_subjects"]) < 3:
+                g["sample_subjects"].append(subject)
 
     return sorted(
         [
@@ -158,8 +165,61 @@ def detect_newsletters(messages: list[dict]) -> list[Newsletter]:
                 unsubscribe_mailto=g["unsubscribe_mailto"],
                 unsubscribe_url=g["unsubscribe_url"],
                 one_click_post=g["one_click_post"],
+                sample_subjects=g["sample_subjects"],
             )
             for g in groups.values()
+        ],
+        key=lambda n: n.email_count,
+        reverse=True,
+    )
+
+
+def group_remaining(messages: list[dict], exclude_domains: set[str]) -> list[Newsletter]:
+    """
+    Group messages from senders NOT in exclude_domains.
+    Only includes senders with 2+ emails — one-off contacts are skipped.
+    Returns Newsletter objects for AI threat analysis (no unsubscribe info).
+    """
+    groups: dict[str, dict] = {}
+
+    for msg in messages:
+        headers = _extract_headers(msg)
+        from_header = headers.get("from", "")
+        if not from_header:
+            continue
+        name, email, domain = _parse_sender(from_header)
+        if domain in exclude_domains:
+            continue
+        subject = headers.get("subject", "")
+        date = headers.get("date", "")
+
+        if domain not in groups:
+            groups[domain] = {
+                "sender_name": name,
+                "sender_email": email,
+                "domain": domain,
+                "count": 1,
+                "last_received": date,
+                "sample_subjects": [subject] if subject else [],
+            }
+        else:
+            g = groups[domain]
+            g["count"] += 1
+            if subject and len(g["sample_subjects"]) < 3:
+                g["sample_subjects"].append(subject)
+
+    return sorted(
+        [
+            Newsletter(
+                sender_name=g["sender_name"],
+                sender_email=g["sender_email"],
+                domain=g["domain"],
+                email_count=g["count"],
+                last_received=g["last_received"],
+                sample_subjects=g["sample_subjects"],
+            )
+            for g in groups.values()
+            if g["count"] >= 2
         ],
         key=lambda n: n.email_count,
         reverse=True,

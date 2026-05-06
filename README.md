@@ -18,11 +18,13 @@ Scan your Gmail inbox, find every newsletter you're subscribed to, and unsubscri
 
 ## What it does
 
-1. Connects to your Gmail account via Google's official OAuth2 login (the same "Sign in with Google" popup you already know).
-2. Scans the last 90 days of your inbox and identifies newsletters using email header signals (`List-Unsubscribe`, `List-Id`, `Precedence: bulk`, etc.).
-3. Groups them by sender domain and shows you a checklist — name, email count, and whether it can be unsubscribed automatically.
-4. You pick which ones to ditch (all or selected), confirm once, and the app handles the rest.
-5. Shows a live result log and a final summary of what worked, what needs a manual click, and anything that failed.
+1. Connects to your Gmail account via Google's official OAuth2 login.
+2. Offers two scan modes — **Algorithm Only** (fast, free) or **AI Agent Filter** (deeper threat detection).
+3. Algorithm mode scores emails by header signals and groups newsletters by sender domain.
+4. AI Agent Filter mode additionally checks non-newsletter senders for phishing and spam that engineered past the header rules.
+5. Shows a colour-coded checklist — `newsletter` (green), `spam` (yellow), `phishing email` (red) — with email count and unsubscribe method.
+6. You pick which senders to action, choose Unsubscribe / Delete / Both, and the app handles the rest.
+7. Runs a live log and an inbox verification pass to confirm results.
 
 ---
 
@@ -34,16 +36,14 @@ Scan your Gmail inbox, find every newsletter you're subscribed to, and unsubscri
 | Email access | Gmail API (OAuth2) | Official, secure, no password stored |
 | Auth library | `google-auth-oauthlib` | Handles OAuth2 token flow + refresh |
 | API client | `google-api-python-client` | Official Google client for Gmail API |
-| TUI framework | `Textual` | Rich, keyboard-navigable terminal UI — works for non-technical users |
+| TUI framework | `Textual` | Rich, keyboard-navigable terminal UI |
 | HTTP unsubscribe | `httpx` | Async HTTP for RFC 8058 one-click POST and HTTPS GET unsubscribes |
+| Browser fallback | `Playwright` | Headless Chromium for unsubscribe pages that require a button click (Phase 2) |
+| AI classification | `anthropic` / `openai` / `google-generativeai` | Classifies non-newsletter senders as spam or phishing |
 
 ### Why not a web app?
 
 A local terminal app keeps all email data on your machine. No server stores your tokens or email content. For a personal inbox tool, this is the right tradeoff — privacy over polish.
-
-### Why OAuth2 and not username/password?
-
-Google and Microsoft both deprecated direct password login for third-party apps in 2022–2023. OAuth2 is the only supported path — but from the user's side it looks and feels identical to "Sign in with Google" on any website. The app opens a browser, you click Allow, done.
 
 ---
 
@@ -55,22 +55,33 @@ newsrefund/
 ├── requirements.txt
 │
 ├── auth/
-│   └── gmail.py               # OAuth2 flow, token save/load/refresh, logout
+│   ├── gmail.py               # OAuth2 flow, token save/load/refresh, logout
+│   └── api_keys.py            # AI provider key storage (~/.newsrefund/api_keys.json)
 │
 ├── scanner/
-│   ├── fetcher.py             # Gmail API — fetch last 90 days (metadata only)
-│   └── detector.py            # Score emails, group newsletters by sender domain
+│   ├── fetcher.py             # Gmail API — fetch last N days (metadata only)
+│   ├── detector.py            # Score emails, group newsletters; group_remaining for AI
+│   └── ai_detector.py         # Classify non-newsletter senders via AI provider
 │
 ├── unsubscriber/
 │   └── handler.py             # Execute unsubscribes: RFC 8058 → HTTPS GET → mailto
 │
 └── ui/
-    └── app.py                 # Textual TUI — 8 screens, full keyboard + mouse support
+    └── app.py                 # Textual TUI — screens, keyboard + mouse support
 ```
 
 ---
 
 ## Workflow
+
+### Scan mode selection
+
+From the Welcome screen, choose before scanning:
+
+| Mode | What it does | Cost |
+|---|---|---|
+| **Algorithm Only** | Header-based scoring. Fast and free. | Free |
+| **AI Agent Filter** | Algorithm first, then AI checks remaining senders for phishing & spam. | AI API cost per sender |
 
 ### Authentication
 
@@ -81,98 +92,101 @@ User clicks "Connect Gmail"
 credentials.json present?
    NO  → Setup Guide screen (step-by-step to get it from Google Cloud Console)
    YES → Token saved already?
-            YES (and valid) → skip to Scan
-            NO  → Open browser → Google sign-in page → user clicks Allow
+            YES (and valid) → skip to Scan Options
+            NO  → Open browser → Google sign-in → user clicks Allow
                   → token saved to ~/.newsrefund/token.json
-                  → proceed to Scan
 ```
 
-The token is saved locally and refreshes automatically. The user only goes through the browser login once.
-
-### Scanning
+### Scanning — Algorithm Only
 
 ```
-Connect to Gmail API
+Fetch up to 500 email headers from last N days
         │
         ▼
-Fetch up to 500 email headers from last 90 days
-(only metadata — no email body is downloaded)
-        │
-        ▼
-For each email, score it as a newsletter:
-  +3  List-Unsubscribe header present
-  +2  List-Id header present
+Score each email:
+  +3  List-Unsubscribe header
+  +2  List-Id header
   +2  Precedence: bulk / list
   +1  X-Campaign or X-Mailer header
-  +1  From address matches noreply / newsletter / digest / etc.
-  Score ≥ 2 → classified as newsletter
+  +1  From matches noreply / newsletter / digest / etc.
+  Score ≥ 2 → newsletter  [green]
         │
         ▼
-Group by sender domain, keep best unsubscribe info per domain
-Sort by email count (most frequent first)
+Group by sender domain, sort by email count
 ```
+
+### Scanning — AI Agent Filter (two-tier)
+
+```
+Tier 1 — Algorithm (same as above)
+        │
+        ├── score ≥ 2  →  newsletters list  [green newsletter]
+        │
+        └── score < 2  →  group_remaining()
+                               │
+                               │  senders with 2+ emails only
+                               │  (one-off personal contacts skipped)
+                               ▼
+                          Tier 2 — AI classification
+                               │
+                               ├── spam      →  added to list  [yellow spam]
+                               ├── phishing  →  added to list  [red phishing email]
+                               └── newsletter → silently dropped
+                                   (not shown — no action needed)
+```
+
+The AI log panel shows live progress: provider, model, each sender analysed, and the result with reason.
 
 ### Unsubscribe execution
 
-For each selected newsletter, the app tries methods in this priority order:
+For each selected sender, the app tries methods in priority order:
 
 ```
-Has List-Unsubscribe-Post header + HTTPS URL?
-   YES → HTTP POST {"List-Unsubscribe": "One-Click"}   (RFC 8058 — most reliable)
-    │
+Has List-Unsubscribe-Post + HTTPS URL?
+   YES → HTTP POST {"List-Unsubscribe": "One-Click"}   (RFC 8058)
     ▼ if failed
 Has HTTPS URL in List-Unsubscribe?
-   YES → HTTP GET to that URL
-    │
+   YES → HTTP GET → check page for success phrase
+    ▼ if page requires a click
+    (Phase 2) Playwright opens page in headless Chrome and clicks
     ▼ if failed
 Has mailto: in List-Unsubscribe?
    YES → Send blank email via Gmail API
-    │
-    ▼ if none of the above
-Mark as "manual required" — user must open the email and click Unsubscribe
+    ▼ if none
+Mark as "manual required"
 ```
 
 ### Inbox verification pass
 
-After all unsubscribe / delete operations complete, the app runs a verification pass for every processed sender:
+After all operations complete, the app searches the inbox for each processed sender and updates the result:
 
 ```
-For each newsletter processed:
-        │
-        ▼
-Search Gmail inbox for emails from @sender-domain
-        │
-        ├── 0 emails found
-        │       → ✓  Result: success — "Verified — inbox clear"
-        │
-        ├── emails found + mode was delete or both
-        │       → ✗  Result: failed — "Inbox check: X email(s) still present"
-        │
-        ├── emails found + mode was unsub only
-        │       → !  Keep original unsub result — old emails remain (expected, unsubscribe takes a few days)
-        │
-        └── API error
-                → Keep original result, log "Could not verify"
+0 emails found          → ✓ Verified — inbox clear
+emails found (delete)   → ✗ Inbox check: X email(s) still present
+emails found (unsub)    → ! Old emails remain (expected, takes a few days)
+API error               → Keep original result
 ```
-
-The summary screen reflects these verified results rather than just the raw unsubscribe response.
 
 ### Screen flow
 
 ```
-Welcome → (Setup Guide) → Auth → Scanning → Newsletter List → Confirm → Unsubscribing → Summary
+Welcome → (Setup Guide) → Auth → Scan Options → Scanning → Newsletter List → Action Select → Unsubscribing → Summary
+                  ↕
+            API Keys screen (accessible any time from Welcome)
 ```
 
 | Screen | Purpose |
 |---|---|
-| Welcome | Single "Connect Gmail" button |
+| Welcome | Scan mode buttons, Gmail connect, API Keys management |
 | Setup Guide | Step-by-step for first-time `credentials.json` setup |
 | Auth | "Opening browser…" + spinner while OAuth runs |
-| Scanning | Live progress bar + running newsletter count |
-| Newsletter List | Checklist — Space or click to tick, Select All / Deselect All |
-| Confirm | Shows names, asks for final approval |
-| Unsubscribing | Live per-item log (✓ success / ! manual / ✗ failed) |
-| Summary | Final counts + list of newsletters needing manual action |
+| Scan Options | Choose how many days back to scan |
+| Scanning | Progress bar + live AI log panel (AI mode only) |
+| Newsletter List | Colour-coded checklist with labels — tick to select |
+| Action Select | Choose Unsubscribe / Delete Emails / Both |
+| Unsubscribing | Live per-sender log (✓ success / ! manual / ✗ failed) |
+| Summary | Final counts + senders needing manual action |
+| API Keys | Manage keys for Anthropic, OpenAI, Google; select active provider and model |
 
 ---
 
@@ -190,35 +204,50 @@ Open a terminal in the `newsrefund` folder and run:
 pip install -r requirements.txt
 ```
 
+Then install the Playwright browser (one-time, ~150 MB):
+
+```
+playwright install chromium
+```
+
 ### Step 3 — Get your Google API credentials (one-time)
 
-The app needs a free Google API key to access Gmail on your behalf.
-
 1. Go to [console.cloud.google.com](https://console.cloud.google.com)
-2. Click **Select a project → New Project** — name it anything (e.g. `NewsRefund`)
-3. In the search bar, search for **Gmail API** and click **Enable**
-4. Go to **APIs & Services → Credentials**
-5. Click **Create Credentials → OAuth 2.0 Client ID**
-6. Choose **Desktop app**, click **Create**
-7. Click **Download JSON** — rename the file to `credentials.json`
-8. Copy `credentials.json` into: `C:\Users\<you>\.newsrefund\`
-   - On first launch the app will tell you the exact path if you are unsure
+2. Create a project and enable the **Gmail API**
+3. Go to **APIs & Services → Credentials → Create OAuth 2.0 Client ID**
+4. Application type: **Desktop app**
+5. Download the JSON, rename it `credentials.json`
+6. Copy it into `C:\Users\<you>\.newsrefund\`
 
-> This is a one-time step. After the first login, the app saves a token and you never need to repeat it.
+> After the first login the app saves a token — you never repeat this step.
 
-### Step 4 — Add your Gmail account as a test user (while the app is in development)
-
-Because the Google Cloud project is in testing mode, you must allow your own Gmail address:
+### Step 4 — Add your Gmail as a test user
 
 1. Go to **APIs & Services → OAuth consent screen**
-2. Scroll to **Test users** → click **Add Users**
+2. Scroll to **Test users → Add Users**
 3. Enter your Gmail address and save
 
-> **Required OAuth scopes** — When Google asks for permission, the app requests:
-> - `gmail.modify` — read emails and move them to trash (needed for Delete and Unsubscribe + Delete modes)
+> **Required OAuth scopes:**
+> - `gmail.modify` — read emails and trash them
 > - `gmail.send` — send the blank unsubscribe email for `mailto:` links
->
-> If you previously authorised the app with read-only access, **log out inside the app** (`Ctrl+L`) and reconnect so Google issues a new token with the correct scopes.
+
+### Step 5 — Set up an AI API key (optional, for AI Agent Filter)
+
+AI Agent Filter requires a key from one of these providers. Only one is needed.
+
+| Provider | Where to get a key | Env variable |
+|---|---|---|
+| Anthropic (Claude) | [console.anthropic.com](https://console.anthropic.com) | `ANTHROPIC_API_KEY` |
+| OpenAI (GPT) | [platform.openai.com](https://platform.openai.com) | `OPENAI_API_KEY` |
+| Google (Gemini) | [aistudio.google.com](https://aistudio.google.com) | `GOOGLE_API_KEY` |
+
+**Option A — via the app (recommended)**
+Click **Manage API Keys →** on the Welcome screen, paste your key, tick the provider you want to use, and click **Save**.
+
+**Option B — environment variable**
+Set the variable before running the app. Keys in env vars take priority over saved keys.
+
+Priority order when multiple keys are present: **Anthropic → OpenAI → Google** (unless you tick a specific provider in Manage API Keys).
 
 ---
 
@@ -228,11 +257,11 @@ Because the Google Cloud project is in testing mode, you must allow your own Gma
 python main.py
 ```
 
-**Keyboard shortcuts inside the app:**
+**Keyboard shortcuts:**
 
 | Key | Action |
 |---|---|
-| `Space` | Tick / untick a newsletter |
+| `Space` | Tick / untick a sender |
 | `↑ ↓` | Move through the list |
 | `Ctrl+L` | Log out (clears saved token) |
 | `Q` | Quit |
@@ -241,23 +270,30 @@ python main.py
 
 ## Roadmap
 
-### Phase 1 — Current (Gmail foundation)
+### Phase 1 — Gmail foundation
 - [x] Gmail OAuth2 login
-- [x] Inbox scanner with newsletter scoring
-- [x] Newsletter checklist TUI
+- [x] Inbox scanner with newsletter header scoring
+- [x] Newsletter checklist TUI with colour-coded labels
 - [x] Auto-unsubscribe via RFC 8058, HTTPS GET, mailto
+- [x] Inbox verification pass after unsubscribing
 
-### Phase 2 — Web-based unsubscribe fallback
-- [ ] Parse unsubscribe link from email body HTML
-- [ ] Open link in headless browser (Playwright) to handle confirmation pages
-- [ ] Handle multi-step unsubscribe flows
+### Phase 2 — AI Agent Filter
+- [x] Two-tier scan: algorithm detects newsletters, AI checks remaining senders
+- [x] Labels: newsletter (green), spam (yellow), phishing email (red)
+- [x] Support for Anthropic, OpenAI, and Google Gemini
+- [x] Per-provider model selection (Haiku / Sonnet / Opus, GPT-4o-mini / GPT-4o, Gemini Flash / Pro)
+- [x] Live AI log panel showing provider, model, and per-sender verdict
+- [x] API key manager with tick-to-select, masked input, show/hide, and connection test
 
-### Phase 3 — Multi-provider support
+### Phase 3 — Browser-based unsubscribe fallback (Playwright)
+- [ ] Load `List-Unsubscribe` URL in headless Chromium after POST/GET fails
+- [ ] Detect and click the unsubscribe button automatically
+- [ ] Handle confirmation pages that require a second click
+
+### Phase 4 — Multi-provider support
 - [ ] Outlook / Hotmail via Microsoft OAuth2 + Graph API
 - [ ] Generic IMAP support (Yahoo, iCloud, custom domains)
-- [ ] Provider selection on the Welcome screen
 
-### Phase 4 — Quality of life
-- [x] Inbox verification pass after unsubscribing — confirms inbox is clear per sender
+### Phase 5 — Quality of life
 - [ ] Whitelist (never suggest unsubscribing from certain senders)
 - [ ] Export unsubscribe history to CSV

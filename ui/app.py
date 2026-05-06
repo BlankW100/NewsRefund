@@ -19,9 +19,22 @@ from textual.widgets import (
     LoadingIndicator,
     ProgressBar,
     RichLog,
+    Select,
     Static,
 )
 
+from auth.api_keys import (
+    DEFAULT_MODELS,
+    PROVIDER_MODELS,
+    PROVIDERS,
+    get_active_provider_name,
+    get_model,
+    get_selected_provider,
+    load_saved_keys,
+    save_keys,
+    save_model,
+    set_selected_provider,
+)
 from auth.gmail import (
     get_connected_email,
     get_credentials,
@@ -30,7 +43,7 @@ from auth.gmail import (
     is_authenticated,
     logout,
 )
-from scanner.detector import Newsletter, detect_newsletters
+from scanner.detector import Newsletter, detect_newsletters, group_remaining
 from scanner.fetcher import build_service, fetch_email_headers
 from unsubscriber.handler import check_inbox_count, delete_newsletter_emails, unsubscribe
 
@@ -101,6 +114,81 @@ Button {
 #scan-opt-actions {
     height: auto;
     margin-top: 1;
+}
+
+/* ── Scan AI status ────────────────────────────────────────── */
+#scan-ai-status {
+    text-align: center;
+    color: #7ec8e3;
+    margin-top: 1;
+}
+
+/* ── AI log panel (scan screen, AI mode only) ──────────────── */
+#ai-log-header {
+    padding: 0 2;
+    color: #555577;
+    margin: 1 2 0 2;
+}
+#ai-log {
+    height: 1fr;
+    border: round #2d3250;
+    background: #07090f;
+    margin: 0 2 1 2;
+}
+
+/* ── API Keys screen ───────────────────────────────────────── */
+.key-row {
+    height: 3;
+    margin-bottom: 1;
+}
+.select-btn {
+    width: 3;
+    min-width: 3;
+    margin-right: 1;
+}
+.select-btn-on {
+    color: #4ade80;
+}
+.select-btn-off {
+    color: #555577;
+}
+.key-provider-label {
+    width: 22;
+    content-align: left middle;
+    color: #8888aa;
+}
+.key-input {
+    width: 1fr;
+}
+.show-btn {
+    width: 8;
+    min-width: 8;
+    margin-left: 1;
+}
+.model-row {
+    height: 3;
+    margin-bottom: 1;
+    padding-left: 4;
+}
+.model-label {
+    width: 10;
+    content-align: left middle;
+    color: #555577;
+}
+.model-select {
+    width: 1fr;
+}
+#api-status {
+    text-align: center;
+    margin: 1 0;
+    height: auto;
+}
+#api-key-actions {
+    height: auto;
+    margin-top: 1;
+}
+#api-key-actions Button {
+    width: 1fr;
 }
 #scan-opt-actions Button {
     width: 1fr;
@@ -572,6 +660,165 @@ class CredentialsSetupScreen(Screen):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# API Keys screen — manage provider keys
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ApiKeysScreen(Screen):
+    def compose(self) -> ComposeResult:
+        saved = load_saved_keys()
+        selected = get_selected_provider()
+        rows: list = [
+            Label("Manage API Keys", classes="hero"),
+            Static(
+                "✓ tick the provider you want to use.\n"
+                "If none selected, the first available key is used automatically.",
+                classes="body-text",
+            ),
+            Static(""),
+        ]
+        for slug, display_name, _ in PROVIDERS:
+            is_on = slug == selected
+            current_model = get_model(slug)
+            rows.append(
+                Horizontal(
+                    Button(
+                        "✓" if is_on else "○",
+                        id=f"sel-{slug}",
+                        classes=f"select-btn {'select-btn-on' if is_on else 'select-btn-off'}",
+                    ),
+                    Label(display_name, classes="key-provider-label"),
+                    Input(
+                        value=saved.get(slug, ""),
+                        password=True,
+                        placeholder=f"Paste {display_name} key…",
+                        id=f"key-{slug}",
+                        classes="key-input",
+                    ),
+                    Button("Show", id=f"show-{slug}", classes="show-btn"),
+                    classes="key-row",
+                )
+            )
+            rows.append(
+                Horizontal(
+                    Label("Model:", classes="model-label"),
+                    Select(
+                        options=PROVIDER_MODELS.get(slug, []),
+                        value=current_model,
+                        id=f"model-{slug}",
+                        classes="model-select",
+                        allow_blank=False,
+                    ),
+                    classes="model-row",
+                )
+            )
+        rows += [
+            Static(""),
+            Label("", id="api-status"),
+            Horizontal(
+                Button("Test Connection", id="btn-test", variant="default"),
+                Button("Save  →", id="btn-save", variant="success"),
+                Button("← Back", id="btn-back", variant="default"),
+                id="api-key-actions",
+            ),
+        ]
+        yield Center(Container(*rows, classes="card"))
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._refresh_status()
+
+    def _refresh_status(self) -> None:
+        name = get_active_provider_name()
+        lbl = self.query_one("#api-status", Label)
+        if name:
+            lbl.update(f"[green]Active provider: {name}[/green]")
+        else:
+            lbl.update("[yellow]No active provider — add a key above[/yellow]")
+
+    @on(Button.Pressed)
+    def handle_button(self, event: Button.Pressed) -> None:
+        btn_id = event.button.id or ""
+        if btn_id.startswith("sel-"):
+            self._toggle_selection(btn_id[4:])
+        elif btn_id.startswith("show-"):
+            self._toggle_show(btn_id[5:])
+        elif btn_id == "btn-save":
+            self._save()
+        elif btn_id == "btn-test":
+            self._test()
+        elif btn_id == "btn-back":
+            self.app.pop_screen()
+
+    @on(Select.Changed)
+    def handle_model_change(self, event: Select.Changed) -> None:
+        widget_id = event.select.id or ""
+        if widget_id.startswith("model-") and event.value is not Select.BLANK:
+            save_model(widget_id[6:], str(event.value))
+
+    def _toggle_selection(self, clicked_slug: str) -> None:
+        current = get_selected_provider()
+        new_slug = None if current == clicked_slug else clicked_slug
+        set_selected_provider(new_slug)
+        for slug, _, _ in PROVIDERS:
+            btn = self.query_one(f"#sel-{slug}", Button)
+            if slug == new_slug:
+                btn.label = "✓"
+                btn.remove_class("select-btn-off")
+                btn.add_class("select-btn-on")
+            else:
+                btn.label = "○"
+                btn.remove_class("select-btn-on")
+                btn.add_class("select-btn-off")
+        self._refresh_status()
+
+    def _toggle_show(self, slug: str) -> None:
+        inp = self.query_one(f"#key-{slug}", Input)
+        btn = self.query_one(f"#show-{slug}", Button)
+        inp.password = not inp.password
+        btn.label = "Hide" if not inp.password else "Show"
+
+    def _save(self) -> None:
+        keys = {slug: self.query_one(f"#key-{slug}", Input).value for slug, _, _ in PROVIDERS}
+        save_keys(keys)
+        self._refresh_status()
+        self.notify("API keys saved.", title="Saved", timeout=3)
+
+    def _test(self) -> None:
+        selected_slug = get_selected_provider()
+        if selected_slug:
+            slug = selected_slug
+        else:
+            # No tick — use first provider that has a key in the input field
+            slug = next(
+                (s for s, _, _ in PROVIDERS if self.query_one(f"#key-{s}", Input).value.strip()),
+                None,
+            )
+        if slug is None:
+            self.query_one("#api-status", Label).update(
+                "[red]No API key entered for any provider.[/red]"
+            )
+            return
+        provider_name = next(n for s, n, _ in PROVIDERS if s == slug)
+        key = self.query_one(f"#key-{slug}", Input).value.strip()
+        if not key:
+            self.query_one("#api-status", Label).update(
+                f"[red]No API key entered for {provider_name}.[/red]"
+            )
+            return
+        self.query_one("#api-status", Label).update(f"Testing {provider_name}…")
+        self._run_test(provider_name, key)
+
+    @work(thread=True)
+    def _run_test(self, provider_name: str, key: str) -> None:
+        from scanner.ai_detector import validate_specific
+        ok, msg = validate_specific(provider_name, key)
+        def _update() -> None:
+            lbl = self.query_one("#api-status", Label)
+            lbl.update(f"[green]✓ Connected — {msg}[/green]" if ok else f"[red]✗ {msg}[/red]")
+        self.app.call_from_thread(_update)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Screen 1 — Welcome
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -587,16 +834,28 @@ class WelcomeScreen(Screen):
                 ),
                 Static(""),
                 Button(
-                    "Start  →",
-                    id="btn-start",
+                    "Algorithm Scan Only  →",
+                    id="btn-start-algo",
                     variant="success",
+                    classes="btn-full",
+                ),
+                Button(
+                    "AI Agent Filter  →",
+                    id="btn-start-ai",
+                    variant="primary",
+                    classes="btn-full",
+                ),
+                Button(
+                    "Manage API Keys  →",
+                    id="btn-api-keys",
+                    variant="default",
                     classes="btn-full",
                 ),
                 Static(""),
                 Button(
                     "Connect your Gmail account  →",
                     id="btn-connect",
-                    variant="primary",
+                    variant="default",
                     classes="btn-full",
                 ),
                 Label("", id="connected-label"),
@@ -625,23 +884,66 @@ class WelcomeScreen(Screen):
         label = self.query_one("#connected-label", Label)
         label.update(f"Connected: {email}" if email else "No account connected")
 
-    @on(Button.Pressed, "#btn-start")
-    def handle_start(self) -> None:
-        if is_authenticated():
-            self.app.push_screen(ScanOptionsScreen())
-        else:
+    @on(Button.Pressed, "#btn-start-algo")
+    def handle_start_algo(self) -> None:
+        if not is_authenticated():
             self.notify(
-                "Please connect your Gmail account first using the button below.",
+                "Please connect your Gmail account first.",
                 title="Not connected",
                 severity="warning",
             )
+            return
+        self.app.push_screen(ScanOptionsScreen(ai_mode=False))
+
+    @on(Button.Pressed, "#btn-start-ai")
+    def handle_start_ai(self) -> None:
+        if not is_authenticated():
+            self.notify(
+                "Please connect your Gmail account first.",
+                title="Not connected",
+                severity="warning",
+            )
+            return
+        self.notify("Checking AI connection…", timeout=4)
+        self._validate_ai_then_proceed()
+
+    @work(thread=True)
+    def _validate_ai_then_proceed(self) -> None:
+        from scanner.ai_detector import validate_provider
+        ok, msg = validate_provider()
+        if ok:
+            self.app.call_from_thread(
+                self.app.push_screen, ScanOptionsScreen(ai_mode=True)
+            )
+        else:
+            def _show_error() -> None:
+                self.notify(
+                    f"{msg}\nAdd or fix your key in Manage API Keys.",
+                    title="AI connection failed",
+                    severity="error",
+                    timeout=7,
+                )
+                self.app.push_screen(ApiKeysScreen())
+            self.app.call_from_thread(_show_error)
 
     @on(Button.Pressed, "#btn-connect")
     def handle_connect(self) -> None:
+        email = get_connected_email()
+        if email:
+            self.notify(
+                f"{email} is already connected.\nTo switch accounts, click Log Out first.",
+                title="Already connected",
+                timeout=6,
+            )
+            return
         if has_credentials_file():
             self.app.push_screen(AuthScreen())
         else:
             self.app.push_screen(CredentialsSetupScreen())
+
+    @on(Button.Pressed, "#btn-api-keys")
+    def handle_api_keys(self) -> None:
+        self.app.push_screen(ApiKeysScreen())
 
     @on(Button.Pressed, "#btn-logout")
     def handle_logout(self) -> None:
@@ -712,7 +1014,12 @@ _QUICK_PICKS: list[tuple[str, int]] = [
 
 
 class ScanOptionsScreen(Screen):
+    def __init__(self, ai_mode: bool = False) -> None:
+        super().__init__()
+        self._ai_mode = ai_mode
+
     def compose(self) -> ComposeResult:
+        mode_label = "[primary]AI Agent Filter[/primary]" if self._ai_mode else "Algorithm Only"
         yield Header(show_clock=False)
         yield Center(
             Container(
@@ -721,6 +1028,7 @@ class ScanOptionsScreen(Screen):
                     "Type the number of days, or use a quick pick below.",
                     classes="body-text",
                 ),
+                Label(f"Mode: {mode_label}", classes="hint"),
                 Static(""),
                 Input(placeholder="e.g. 90", id="days-input"),
                 Static(""),
@@ -735,7 +1043,7 @@ class ScanOptionsScreen(Screen):
                 ),
                 Horizontal(
                     Button("← Back", id="btn-back", variant="default"),
-                    Button("Start Scanning →", id="btn-start", variant="success"),
+                    Button("Start Scanning  →", id="btn-start", variant="success"),
                     id="scan-opt-actions",
                 ),
                 classes="card",
@@ -770,7 +1078,7 @@ class ScanOptionsScreen(Screen):
                 timeout=4,
             )
             return
-        self.app.switch_screen(ScanScreen(days=days))
+        self.app.switch_screen(ScanScreen(days=days, ai_mode=self._ai_mode))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -781,27 +1089,36 @@ class ScanScreen(Screen):
     _fetched: reactive[int] = reactive(0)
     _found: reactive[int] = reactive(0)
 
-    def __init__(self, days: int = 90) -> None:
+    def __init__(self, days: int = 90, ai_mode: bool = False) -> None:
         super().__init__()
         self._days = days
+        self._ai_mode = ai_mode
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
-        yield Center(
-            Container(
-                Label("Scanning your inbox…", classes="hero"),
-                Label(
-                    f"Looking through the last {self._days} days of emails.\nThis usually takes under 30 seconds.",
-                    id="scan-status",
-                ),
-                Static(""),
-                ProgressBar(total=500, show_eta=False, id="scan-bar"),
-                Label("", id="scan-count"),
-                Static(""),
-                LoadingIndicator(),
-                classes="card",
-            )
+        ai_note = "\nAI analysis will run after fetching." if self._ai_mode else ""
+        card = Container(
+            Label("Scanning your inbox…", classes="hero"),
+            Label(
+                f"Looking through the last {self._days} days of emails.\nThis usually takes under 30 seconds.{ai_note}",
+                id="scan-status",
+            ),
+            Static(""),
+            ProgressBar(total=500, show_eta=False, id="scan-bar"),
+            Label("", id="scan-count"),
+            Label("", id="scan-ai-status"),
+            Static(""),
+            LoadingIndicator(),
+            classes="card",
         )
+        yield Header(show_clock=False)
+        if self._ai_mode:
+            yield Vertical(
+                Center(card),
+                Static("─── AI Agent log ──────────────────────────────────────────────", id="ai-log-header"),
+                RichLog(id="ai-log", markup=True, highlight=False, wrap=True),
+            )
+        else:
+            yield Center(card)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -828,6 +1145,41 @@ class ScanScreen(Screen):
                 messages.append(msg)
 
             newsletters = detect_newsletters(messages)
+
+            if self._ai_mode:
+                newsletter_domains = {nl.domain for nl in newsletters}
+                remaining = group_remaining(messages, exclude_domains=newsletter_domains)
+
+                nl_count = len(newsletters)
+                self.app.call_from_thread(self._set_ai_phase, nl_count, len(remaining))
+
+                if remaining:
+                    try:
+                        from scanner.ai_detector import classify_newsletters
+
+                        def ai_log(msg: str) -> None:
+                            self.app.call_from_thread(self._update_ai_status, msg)
+                            self.app.call_from_thread(self._ai_log, msg)
+
+                        classify_newsletters(remaining, log=ai_log)
+                        flagged = [nl for nl in remaining if nl.label in ("spam", "phishing")]
+                        if flagged:
+                            self.app.call_from_thread(
+                                self._ai_log,
+                                f"[bold yellow]── Found {len(flagged)} threat{'s' if len(flagged) != 1 else ''} ──[/bold yellow]",
+                            )
+                        newsletters = sorted(
+                            newsletters + flagged,
+                            key=lambda n: n.email_count,
+                            reverse=True,
+                        )
+                    except Exception as exc:
+                        self.app.call_from_thread(self._show_ai_error, str(exc))
+                else:
+                    self.app.call_from_thread(
+                        self._ai_log, "[dim]No repeat non-newsletter senders to check.[/dim]"
+                    )
+
             self.app.call_from_thread(
                 self.app.switch_screen, NewsletterListScreen(newsletters)
             )
@@ -837,6 +1189,30 @@ class ScanScreen(Screen):
     def _update_progress(self, fetched: int, found: int) -> None:
         self._fetched = fetched
         self._found = found
+
+    def _set_ai_phase(self, nl_count: int, remaining_count: int) -> None:
+        self.query_one("#scan-status", Label).update("Algorithm scan complete. AI checking for threats…")
+        self.query_one("#scan-ai-status", Label).update(f"Checking {remaining_count} senders…")
+        self._ai_log(
+            f"[bold cyan]── Algorithm found {nl_count} newsletter{'s' if nl_count != 1 else ''}. "
+            f"Checking {remaining_count} remaining sender{'s' if remaining_count != 1 else ''} "
+            f"for phishing & spam ──[/bold cyan]"
+        )
+
+    def _update_ai_status(self, msg: str) -> None:
+        self.query_one("#scan-ai-status", Label).update(msg)
+
+    def _ai_log(self, msg: str) -> None:
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M:%S")
+        try:
+            self.query_one("#ai-log", RichLog).write(f"[dim]{ts}[/dim]  {msg}")
+        except Exception:
+            pass
+
+    def _show_ai_error(self, msg: str) -> None:
+        self.query_one("#scan-ai-status", Label).update(f"[yellow]AI scan skipped: {msg}[/yellow]")
+        self._ai_log(f"[red]✗ AI scan failed: {msg}[/red]")
 
     def _show_error(self, msg: str) -> None:
         self.query_one("#scan-status", Label).update(f"Something went wrong:\n{msg}")
@@ -853,14 +1229,24 @@ class NewsletterListScreen(Screen):
         self._newsletters = newsletters
 
     def compose(self) -> ComposeResult:
+        from collections import Counter
         count = len(self._newsletters)
+        label_counts = Counter(n.label for n in self._newsletters)
+        parts = []
+        if label_counts.get("newsletter"):
+            c = label_counts["newsletter"]
+            parts.append(f"[green]{c} newsletter{'s' if c != 1 else ''}[/green]")
+        if label_counts.get("spam"):
+            c = label_counts["spam"]
+            parts.append(f"[yellow]{c} spam[/yellow]")
+        if label_counts.get("phishing"):
+            c = label_counts["phishing"]
+            parts.append(f"[red]{c} phishing[/red]")
+        found_text = f"Found {count}  ·  " + "  ·  ".join(parts) if len(parts) > 1 else f"Found {count} senders"
         yield Header(show_clock=False)
         yield Vertical(
             Vertical(
-                Label(
-                    f"Found {count} newsletter{'s' if count != 1 else ''}",
-                    id="list-found",
-                ),
+                Label(found_text, id="list-found"),
                 Label(
                     "Space / Enter / Click  to tick or untick  ·  Arrow keys to move",
                     id="list-hint",
@@ -888,7 +1274,13 @@ class NewsletterListScreen(Screen):
     def _item_label(n: Newsletter) -> str:
         method = f"[{n.method_label}]" if n.can_auto_unsubscribe else "[Manual]"
         email = n.sender_email if len(n.sender_email) <= 38 else n.sender_email[:35] + "..."
-        return f"{n.sender_name:<25}  {email:<38}  {n.email_count:>3} emails   {method}"
+        _TAG = {
+            "newsletter": "[green]newsletter[/green]",
+            "spam":       "[yellow]spam[/yellow]",
+            "phishing":   "[red]phishing email[/red]",
+        }
+        tag = _TAG.get(n.label, "[green]newsletter[/green]")
+        return f"{n.sender_name:<25}  {email:<38}  {n.email_count:>3} emails   {method:<12}  {tag}"
 
     @on(Button.Pressed, "#btn-all")
     def select_all(self) -> None:

@@ -1,10 +1,12 @@
 import ctypes
 import sys
 
+from auth.api_keys import inject_saved_keys
 from ui.app import NewsRefundApp
 
 
 def main() -> None:
+    inject_saved_keys()
     # Save Windows console input mode so we can restore it after Textual exits
     # (Ctrl+C can leave the terminal in raw mode without this)
     _stdin_mode: int | None = None
