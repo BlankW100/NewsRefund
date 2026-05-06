@@ -200,6 +200,11 @@ Button {
     padding: 0 0 1 4;
     height: auto;
 }
+.detect-btn {
+    min-width: 14;
+    width: auto;
+    margin-left: 1;
+}
 /* ── Connected account label ───────────────────────────────── */
 #connected-label {
     text-align: center;
@@ -738,19 +743,21 @@ class ApiKeysScreen(Screen):
             if not is_ollama:
                 key_row_children.append(Button("Show", id=f"show-{slug}", classes="show-btn"))
             rows.append(Horizontal(*key_row_children, classes="key-row"))
-            rows.append(
-                Horizontal(
-                    Label("Model:", classes="model-label"),
-                    Select(
-                        options=PROVIDER_MODELS.get(slug, []),
-                        value=current_model,
-                        id=f"model-{slug}",
-                        classes="model-select",
-                        allow_blank=False,
-                    ),
-                    classes="model-row",
+            model_row_children = [
+                Label("Model:", classes="model-label"),
+                Select(
+                    options=PROVIDER_MODELS.get(slug, []),
+                    value=current_model,
+                    id=f"model-{slug}",
+                    classes="model-select",
+                    allow_blank=False,
+                ),
+            ]
+            if is_ollama:
+                model_row_children.append(
+                    Button("Auto Detect", id="btn-detect-ollama", classes="detect-btn")
                 )
-            )
+            rows.append(Horizontal(*model_row_children, classes="model-row"))
             if is_ollama:
                 rows.append(Static(
                     "  Setup:\n"
@@ -793,6 +800,9 @@ class ApiKeysScreen(Screen):
             self._toggle_selection(btn_id[4:])
         elif btn_id.startswith("show-"):
             self._toggle_show(btn_id[5:])
+        elif btn_id == "btn-detect-ollama":
+            base_url = self.query_one("#key-ollama", Input).value.strip() or "http://localhost:11434"
+            self._detect_ollama_models(base_url)
         elif btn_id == "btn-save":
             self._save()
         elif btn_id == "btn-test":
@@ -867,6 +877,30 @@ class ApiKeysScreen(Screen):
             lbl = self.query_one("#api-status", Label)
             lbl.update(f"[green]✓ Connected — {msg}[/green]" if ok else f"[red]✗ {msg}[/red]")
         self.app.call_from_thread(_update)
+
+    @work(thread=True)
+    def _detect_ollama_models(self, base_url: str) -> None:
+        import httpx
+        def _set_status(msg: str) -> None:
+            self.query_one("#api-status", Label).update(msg)
+        self.app.call_from_thread(_set_status, "Detecting Ollama models…")
+        try:
+            resp = httpx.get(f"{base_url.rstrip('/')}/api/tags", timeout=5)
+            resp.raise_for_status()
+            models = sorted(m["name"] for m in resp.json().get("models", []))
+            if not models:
+                self.app.call_from_thread(
+                    _set_status, "[yellow]No models found — run: ollama pull llama3.2[/yellow]"
+                )
+                return
+            options = [(name, name) for name in models]
+            summary = ", ".join(models[:4]) + ("…" if len(models) > 4 else "")
+            def _update() -> None:
+                self.query_one("#model-ollama", Select).set_options(options)
+                _set_status(f"[green]Found {len(models)} model{'s' if len(models) != 1 else ''}: {summary}[/green]")
+            self.app.call_from_thread(_update)
+        except Exception as exc:
+            self.app.call_from_thread(_set_status, f"[red]Ollama error: {str(exc)[:120]}[/red]")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
