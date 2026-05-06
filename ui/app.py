@@ -21,7 +21,14 @@ from textual.widgets import (
     Static,
 )
 
-from auth.gmail import get_connected_email, get_credentials, is_authenticated, logout
+from auth.gmail import (
+    get_connected_email,
+    get_credentials,
+    has_credentials_file,
+    install_credentials,
+    is_authenticated,
+    logout,
+)
 from scanner.detector import Newsletter, detect_newsletters
 from scanner.fetcher import build_service, fetch_email_headers
 from unsubscriber.handler import delete_newsletter_emails, unsubscribe
@@ -209,6 +216,19 @@ WarningModal {
     margin-top: 1;
 }
 #modal-actions Button {
+    width: 1fr;
+}
+
+/* ── Credentials setup screen ─────────────────────────────── */
+#creds-path-input {
+    width: 100%;
+    margin: 1 0;
+}
+#creds-actions {
+    height: auto;
+    margin-top: 1;
+}
+#creds-actions Button {
     width: 1fr;
 }
 
@@ -480,6 +500,74 @@ class ActionSelectScreen(Screen):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Screen 0 — Credentials setup (shown when credentials.json is missing)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CredentialsSetupScreen(Screen):
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        yield Center(
+            Container(
+                Label("Google credentials needed", classes="hero"),
+                Static(
+                    "NewsRefund needs a credentials.json file from Google Cloud.\n\n"
+                    "How to get it:\n"
+                    "  1. Go to console.cloud.google.com\n"
+                    "  2. Create a project and enable the Gmail API\n"
+                    "  3. APIs & Services → Credentials → Create OAuth 2.0 Client ID\n"
+                    "  4. Application type: Desktop app\n"
+                    "  5. Download the JSON and paste its path below",
+                    classes="body-text",
+                ),
+                Static(""),
+                Label("Path to your credentials.json:", classes="hint"),
+                Input(
+                    placeholder="e.g. C:\\Users\\you\\Downloads\\credentials.json",
+                    id="creds-path-input",
+                ),
+                Label("", id="creds-error", classes="error"),
+                Horizontal(
+                    Button("← Back", id="btn-back", variant="default"),
+                    Button("Continue  →", id="btn-continue", variant="primary"),
+                    id="creds-actions",
+                ),
+                classes="card",
+            )
+        )
+        yield Footer()
+
+    @on(Button.Pressed, "#btn-back")
+    def handle_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#btn-continue")
+    def handle_continue(self) -> None:
+        self._try_install()
+
+    @on(Input.Submitted, "#creds-path-input")
+    def handle_enter(self) -> None:
+        self._try_install()
+
+    def _try_install(self) -> None:
+        from pathlib import Path as _Path
+        raw = self.query_one("#creds-path-input", Input).value.strip().strip('"')
+        src = _Path(raw)
+        error_label = self.query_one("#creds-error", Label)
+        if not src.exists():
+            error_label.update("File not found — please check the path and try again.")
+            return
+        if src.suffix.lower() != ".json":
+            error_label.update("That doesn't look like a JSON file.")
+            return
+        try:
+            install_credentials(src)
+        except Exception as exc:
+            error_label.update(f"Could not copy file: {exc}")
+            return
+        self.app.switch_screen(AuthScreen())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Screen 1 — Welcome
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -546,7 +634,10 @@ class WelcomeScreen(Screen):
 
     @on(Button.Pressed, "#btn-connect")
     def handle_connect(self) -> None:
-        self.app.push_screen(AuthScreen())
+        if has_credentials_file():
+            self.app.push_screen(AuthScreen())
+        else:
+            self.app.push_screen(CredentialsSetupScreen())
 
     @on(Button.Pressed, "#btn-logout")
     def handle_logout(self) -> None:

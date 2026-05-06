@@ -108,3 +108,10 @@ def logout() -> None:
 
 def has_credentials_file() -> bool:
     return _resolve_creds_path() is not None
+
+
+def install_credentials(src: Path) -> None:
+    """Copy a credentials.json from an arbitrary path into ~/.newsrefund/."""
+    import shutil
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy(src, CREDS_PATH)
