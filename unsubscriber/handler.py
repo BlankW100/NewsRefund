@@ -155,6 +155,18 @@ def delete_newsletter_emails(
     return trashed
 
 
+def check_inbox_count(domain: str, gmail_service) -> int:
+    """Return number of inbox emails from domain. Returns -1 on API error."""
+    try:
+        query = f"from:@{domain} in:inbox"
+        result = gmail_service.users().messages().list(
+            userId="me", q=query, maxResults=100
+        ).execute()
+        return len(result.get("messages", []))
+    except Exception:
+        return -1
+
+
 def _send_mailto(mailto_uri: str, gmail_service) -> tuple[UnsubResult, str]:
     # Strip "mailto:" and any query string (e.g. ?subject=unsubscribe)
     address = mailto_uri.replace("mailto:", "").split("?")[0].strip()

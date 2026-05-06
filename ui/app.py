@@ -32,7 +32,7 @@ from auth.gmail import (
 )
 from scanner.detector import Newsletter, detect_newsletters
 from scanner.fetcher import build_service, fetch_email_headers
-from unsubscriber.handler import delete_newsletter_emails, unsubscribe
+from unsubscriber.handler import check_inbox_count, delete_newsletter_emails, unsubscribe
 
 # ── Shared style ──────────────────────────────────────────────────────────────
 
@@ -931,6 +931,8 @@ class UnsubscribingScreen(Screen):
         super().__init__()
         self._newsletters = newsletters
         self._mode = mode
+        self._final_results: list[tuple[Newsletter, str, str]] = []
+        self._final_deleted: int = 0
 
     def compose(self) -> ComposeResult:
         total = len(self._newsletters)
@@ -971,32 +973,73 @@ class UnsubscribingScreen(Screen):
                     self._log_terminal, f"[bold cyan]── {nl.sender_name}[/bold cyan]"
                 )
 
+                nl_result, nl_msg = "success", ""
+
                 if self._mode in ("unsub", "both"):
-                    result, msg = loop.run_until_complete(
+                    nl_result, nl_msg = loop.run_until_complete(
                         unsubscribe(nl, service, log=log_cb)
                     )
-                    results.append((nl, result, msg))
-                    self.app.call_from_thread(self._log_result, nl, result, msg)
+                    self.app.call_from_thread(self._log_result, nl, nl_result, nl_msg)
 
                 if self._mode in ("delete", "both"):
                     deleted = delete_newsletter_emails(nl.domain, service, log=log_cb)
                     deleted_count += deleted
+                    if self._mode == "delete":
+                        nl_result = "success"
+                        nl_msg = f"Deleted {deleted} email(s)"
+
+                results.append((nl, nl_result, nl_msg))
 
             loop.close()
 
+            # ── Verification pass: check inbox for each sender ────────────────
+            log_cb("")
+            log_cb("[bold cyan]── Verifying inbox…[/bold cyan]")
+            self.app.call_from_thread(self._set_status, "Verifying inbox…")
+            verified: list[tuple[Newsletter, str, str]] = []
+            for nl, r, m in results:
+                log_cb(f"Checking inbox for [bold]{nl.sender_name}[/bold]…")
+                count = check_inbox_count(nl.domain, service)
+                if count == 0:
+                    log_cb("[green]✓ Inbox clear — no emails from this sender[/green]")
+                    verified.append((nl, "success", "Verified — inbox clear"))
+                elif count > 0:
+                    if self._mode in ("delete", "both"):
+                        log_cb(f"[red]✗ {count} email(s) still found in inbox[/red]")
+                        verified.append((nl, "failed", f"Inbox check: {count} email(s) still present"))
+                    else:
+                        log_cb(f"[yellow]! {count} old email(s) remain in inbox[/yellow]")
+                        verified.append((nl, r, f"{m}  ·  {count} old email(s) in inbox"))
+                else:
+                    log_cb("[dim]Could not verify (API error)[/dim]")
+                    verified.append((nl, r, m))
+            results = verified
+
         except Exception as exc:
-            results.append((Newsletter("", "", "", 0, ""), "failed", str(exc)))
             self.app.call_from_thread(
                 self._log_terminal, f"[red]Error: {exc}[/red]"
             )
 
-        self.app.call_from_thread(
-            self.app.switch_screen, SummaryScreen(results, deleted_count)
-        )
+        self._final_results = results
+        self._final_deleted = deleted_count
+        self.app.call_from_thread(self._on_done)
 
     def _update_status(self, name: str) -> None:
         self.query_one("#unsub-bar", ProgressBar).advance(1)
         self.query_one("#unsub-status", Label).update(f"Working on: {name}")
+
+    def _set_status(self, msg: str) -> None:
+        self.query_one("#unsub-status", Label).update(msg)
+
+    def _on_done(self) -> None:
+        self.query_one("#unsub-status", Label).update("Finished!")
+        self.query_one(Vertical).mount(
+            Center(Button("View Results  →", id="btn-next", variant="success"))
+        )
+
+    @on(Button.Pressed, "#btn-next")
+    def handle_next(self) -> None:
+        self.app.switch_screen(SummaryScreen(self._final_results, self._final_deleted))
 
     def _log_terminal(self, msg: str) -> None:
         from datetime import datetime

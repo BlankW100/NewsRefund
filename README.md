@@ -132,6 +132,31 @@ Has mailto: in List-Unsubscribe?
 Mark as "manual required" — user must open the email and click Unsubscribe
 ```
 
+### Inbox verification pass
+
+After all unsubscribe / delete operations complete, the app runs a verification pass for every processed sender:
+
+```
+For each newsletter processed:
+        │
+        ▼
+Search Gmail inbox for emails from @sender-domain
+        │
+        ├── 0 emails found
+        │       → ✓  Result: success — "Verified — inbox clear"
+        │
+        ├── emails found + mode was delete or both
+        │       → ✗  Result: failed — "Inbox check: X email(s) still present"
+        │
+        ├── emails found + mode was unsub only
+        │       → !  Keep original unsub result — old emails remain (expected, unsubscribe takes a few days)
+        │
+        └── API error
+                → Keep original result, log "Could not verify"
+```
+
+The summary screen reflects these verified results rather than just the raw unsubscribe response.
+
 ### Screen flow
 
 ```
@@ -189,6 +214,12 @@ Because the Google Cloud project is in testing mode, you must allow your own Gma
 2. Scroll to **Test users** → click **Add Users**
 3. Enter your Gmail address and save
 
+> **Required OAuth scopes** — When Google asks for permission, the app requests:
+> - `gmail.modify` — read emails and move them to trash (needed for Delete and Unsubscribe + Delete modes)
+> - `gmail.send` — send the blank unsubscribe email for `mailto:` links
+>
+> If you previously authorised the app with read-only access, **log out inside the app** (`Ctrl+L`) and reconnect so Google issues a new token with the correct scopes.
+
 ---
 
 ## Running the app
@@ -227,6 +258,6 @@ python main.py
 - [ ] Provider selection on the Welcome screen
 
 ### Phase 4 — Quality of life
-- [ ] Re-scan after unsubscribing to confirm emails stopped
+- [x] Inbox verification pass after unsubscribing — confirms inbox is clear per sender
 - [ ] Whitelist (never suggest unsubscribing from certain senders)
 - [ ] Export unsubscribe history to CSV
