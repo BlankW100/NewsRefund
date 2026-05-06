@@ -1196,28 +1196,27 @@ class ScanScreen(Screen):
             newsletters = detect_newsletters(messages)
 
             if self._ai_mode:
-                newsletter_domains = {nl.domain for nl in newsletters}
-                remaining = group_remaining(messages, exclude_domains=newsletter_domains)
+                # Check every unique sender — no pre-filter based on algorithm labels
+                remaining = group_remaining(messages, exclude_domains=set())
 
-                nl_count = len(newsletters)
-                self.app.call_from_thread(self._set_ai_phase, nl_count, len(remaining))
+                self.app.call_from_thread(self._set_ai_phase, len(newsletters), len(remaining))
 
                 try:
                     from scanner.ai_detector import classify_newsletters
 
-                    # Phase 1 (auto): text metadata is token-efficient vs full email content
                     flagged = []
                     if remaining:
                         classify_newsletters(remaining, log=self._ai_log_msg)
                         flagged = [nl for nl in remaining if nl.label in ("spam", "phishing")]
                     else:
                         self.app.call_from_thread(
-                            self._ai_log, "[dim]No repeat non-newsletter senders to check.[/dim]"
+                            self._ai_log, "[dim]No senders to check.[/dim]"
                         )
 
                     self._interim_newsletters = newsletters
                     self._interim_flagged = flagged
-                    self.app.call_from_thread(self._prompt_phase2)
+                    # Phase 2 is redundant — AI already checked all senders including newsletters
+                    self.app.call_from_thread(self._finalize_scan)
                 except Exception as exc:
                     self.app.call_from_thread(self._show_ai_error, str(exc))
             else:
@@ -1236,7 +1235,7 @@ class ScanScreen(Screen):
         self.query_one("#scan-ai-status", Label).update(f"Checking {remaining_count} senders…")
         self._ai_log(
             f"[bold cyan]── Algorithm found {nl_count} newsletter{'s' if nl_count != 1 else ''}. "
-            f"Checking {remaining_count} remaining sender{'s' if remaining_count != 1 else ''} "
+            f"AI checking all {remaining_count} sender{'s' if remaining_count != 1 else ''} "
             f"for phishing & spam ──[/bold cyan]"
         )
 
@@ -1302,15 +1301,17 @@ class ScanScreen(Screen):
     def _finalize_scan(self) -> None:
         newsletters = self._interim_newsletters
         flagged = self._interim_flagged
-        total_threats = len(flagged) + len(
-            [nl for nl in newsletters if nl.label in ("spam", "phishing")]
-        )
+        # AI checked all senders so flagged may overlap with newsletters.
+        # Drop algorithm-found newsletter entries that AI reclassified as threats.
+        flagged_domains = {nl.domain for nl in flagged}
+        safe_newsletters = [nl for nl in newsletters if nl.domain not in flagged_domains]
+        total_threats = len(flagged)
         if total_threats:
             self._ai_log(
                 f"[bold yellow]── Found {total_threats} threat{'s' if total_threats != 1 else ''} ──[/bold yellow]"
             )
         final = sorted(
-            newsletters + flagged,
+            safe_newsletters + flagged,
             key=lambda n: n.email_count,
             reverse=True,
         )
