@@ -1196,26 +1196,38 @@ class ScanScreen(Screen):
             newsletters = detect_newsletters(messages)
 
             if self._ai_mode:
-                # Check every unique sender — no pre-filter based on algorithm labels
-                remaining = group_remaining(messages, exclude_domains=set())
-
-                self.app.call_from_thread(self._set_ai_phase, len(newsletters), len(remaining))
+                self.app.call_from_thread(self._set_ai_phase, len(messages))
 
                 try:
-                    from scanner.ai_detector import classify_newsletters
+                    from scanner.ai_detector import classify_messages
 
-                    flagged = []
-                    if remaining:
-                        classify_newsletters(remaining, log=self._ai_log_msg)
-                        flagged = [nl for nl in remaining if nl.label in ("spam", "phishing")]
-                    else:
+                    if not messages:
                         self.app.call_from_thread(
-                            self._ai_log, "[dim]No senders to check.[/dim]"
+                            self._ai_log, "[dim]No emails to analyze.[/dim]"
                         )
+                        self._interim_newsletters = newsletters
+                        self._interim_flagged = []
+                        self.app.call_from_thread(self._finalize_scan)
+                        return
+
+                    # Classify each email individually; get worst label per domain
+                    domain_labels = classify_messages(messages, log=self._ai_log_msg)
+
+                    # Apply per-email labels to algorithm-found newsletters
+                    for nl in newsletters:
+                        if nl.domain in domain_labels:
+                            nl.label, nl.label_reason = domain_labels[nl.domain]
+
+                    # Build sender objects for all domains flagged as threats
+                    all_senders = group_remaining(messages, exclude_domains=set())
+                    for nl in all_senders:
+                        if nl.domain in domain_labels:
+                            nl.label, nl.label_reason = domain_labels[nl.domain]
+
+                    flagged = [nl for nl in all_senders if nl.label in ("spam", "phishing")]
 
                     self._interim_newsletters = newsletters
                     self._interim_flagged = flagged
-                    # Phase 2 is redundant — AI already checked all senders including newsletters
                     self.app.call_from_thread(self._finalize_scan)
                 except Exception as exc:
                     self.app.call_from_thread(self._show_ai_error, str(exc))
@@ -1230,13 +1242,12 @@ class ScanScreen(Screen):
         self._fetched = fetched
         self._found = found
 
-    def _set_ai_phase(self, nl_count: int, remaining_count: int) -> None:
-        self.query_one("#scan-status", Label).update("Algorithm scan complete. AI checking for threats…")
-        self.query_one("#scan-ai-status", Label).update(f"Checking {remaining_count} senders…")
+    def _set_ai_phase(self, total_msg_count: int) -> None:
+        self.query_one("#scan-status", Label).update("Algorithm scan complete. AI analyzing each email…")
+        self.query_one("#scan-ai-status", Label).update(f"Analyzing {total_msg_count} emails individually…")
         self._ai_log(
-            f"[bold cyan]── Algorithm found {nl_count} newsletter{'s' if nl_count != 1 else ''}. "
-            f"AI checking all {remaining_count} sender{'s' if remaining_count != 1 else ''} "
-            f"for phishing & spam ──[/bold cyan]"
+            f"[bold cyan]── AI analyzing all {total_msg_count} email{'s' if total_msg_count != 1 else ''} "
+            f"individually by header context ──[/bold cyan]"
         )
 
     def _update_ai_status(self, msg: str) -> None:
