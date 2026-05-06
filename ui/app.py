@@ -45,7 +45,7 @@ from auth.gmail import (
 )
 from scanner.detector import Newsletter, detect_newsletters, group_remaining
 from scanner.fetcher import build_service, fetch_email_headers
-from unsubscriber.handler import check_inbox_count, delete_newsletter_emails, unsubscribe
+from unsubscriber.handler import check_inbox_count, delete_newsletter_emails, permanently_delete_newsletter_emails, unsubscribe
 
 # ── Shared style ──────────────────────────────────────────────────────────────
 
@@ -482,9 +482,10 @@ class WarningModal(ModalScreen):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ActionSelectScreen(Screen):
-    def __init__(self, newsletters: list[Newsletter]) -> None:
+    def __init__(self, newsletters: list[Newsletter], ai_mode: bool = False) -> None:
         super().__init__()
         self._newsletters = newsletters
+        self._ai_mode = ai_mode
 
     def compose(self) -> ComposeResult:
         n = len(self._newsletters)
@@ -507,23 +508,45 @@ class ActionSelectScreen(Screen):
                     classes="action-card",
                 ),
                 Container(
-                    Label("Delete Emails", classes="action-title"),
                     Label(
-                        "Move all found emails from these senders to Trash.\n"
-                        "This does NOT stop future emails.",
+                        "Permanently Delete Emails" if self._ai_mode else "Delete Emails",
+                        classes="action-title",
+                    ),
+                    Label(
+                        (
+                            "Permanently erase all found emails from these senders.\n"
+                            "This does NOT stop future emails."
+                        ) if self._ai_mode else (
+                            "Move all found emails from these senders to Trash.\n"
+                            "This does NOT stop future emails."
+                        ),
                         classes="action-desc",
                     ),
-                    Button("Delete Emails  →", id="btn-delete", variant="warning", classes="btn-full"),
+                    Button(
+                        "Permanently Delete  →" if self._ai_mode else "Delete Emails  →",
+                        id="btn-delete", variant="warning", classes="btn-full",
+                    ),
                     classes="action-card",
                 ),
                 Container(
-                    Label("Unsubscribe + Delete", classes="action-title"),
                     Label(
-                        "Unsubscribe from all selected senders AND delete every\n"
-                        "email found from them. The most thorough option.",
+                        "Unsubscribe + Permanently Delete" if self._ai_mode else "Unsubscribe + Delete",
+                        classes="action-title",
+                    ),
+                    Label(
+                        (
+                            "Unsubscribe from all selected senders AND permanently delete every\n"
+                            "email found from them. The most thorough option."
+                        ) if self._ai_mode else (
+                            "Unsubscribe from all selected senders AND delete every\n"
+                            "email found from them. The most thorough option."
+                        ),
                         classes="action-desc",
                     ),
-                    Button("Unsubscribe + Delete  →", id="btn-both", variant="error", classes="btn-full"),
+                    Button(
+                        "Unsubscribe + Permanently Delete  →" if self._ai_mode else "Unsubscribe + Delete  →",
+                        id="btn-both", variant="error", classes="btn-full",
+                    ),
                     classes="action-card",
                 ),
                 Button("← Back", id="btn-back", variant="default", classes="btn-full"),
@@ -548,33 +571,43 @@ class ActionSelectScreen(Screen):
             )
         )
         if confirmed:
-            self.app.switch_screen(UnsubscribingScreen(self._newsletters, mode="unsub"))
+            self.app.switch_screen(UnsubscribingScreen(self._newsletters, mode="unsub", ai_mode=self._ai_mode))
 
     @on(Button.Pressed, "#btn-delete")
     async def handle_delete(self) -> None:
         n = len(self._newsletters)
         confirmed = await self.app.push_screen_wait(
             WarningModal(
-                title="Delete emails from these senders?",
+                title="Permanently delete emails from these senders?" if self._ai_mode else "Delete emails from these senders?",
                 body=(
+                    f"You are about to permanently delete all found emails from {n} "
+                    f"sender{'s' if n != 1 else ''}.\n\n"
+                    "Warning: This will NOT stop future emails.\n"
+                    "Permanently deleted emails cannot be recovered."
+                ) if self._ai_mode else (
                     f"You are about to move all found emails from {n} "
                     f"sender{'s' if n != 1 else ''} to Trash.\n\n"
                     "Warning: This will NOT stop future emails.\n"
                     "Trashed emails are permanently deleted after 30 days."
                 ),
-                confirm_label="Yes, delete emails",
+                confirm_label="Yes, permanently delete" if self._ai_mode else "Yes, delete emails",
             )
         )
         if confirmed:
-            self.app.switch_screen(UnsubscribingScreen(self._newsletters, mode="delete"))
+            self.app.switch_screen(UnsubscribingScreen(self._newsletters, mode="delete", ai_mode=self._ai_mode))
 
     @on(Button.Pressed, "#btn-both")
     async def handle_both(self) -> None:
         n = len(self._newsletters)
         confirmed = await self.app.push_screen_wait(
             WarningModal(
-                title="Unsubscribe + Delete?",
+                title="Unsubscribe + Permanently Delete?" if self._ai_mode else "Unsubscribe + Delete?",
                 body=(
+                    f"You are about to:\n"
+                    f"  • Unsubscribe from {n} sender{'s' if n != 1 else ''} via browser\n"
+                    f"  • Permanently delete all found emails from these senders\n\n"
+                    "This cannot be undone."
+                ) if self._ai_mode else (
                     f"You are about to:\n"
                     f"  • Send unsubscribe requests to {n} sender{'s' if n != 1 else ''}\n"
                     f"  • Delete all found emails from these senders\n\n"
@@ -584,7 +617,7 @@ class ActionSelectScreen(Screen):
             )
         )
         if confirmed:
-            self.app.switch_screen(UnsubscribingScreen(self._newsletters, mode="both"))
+            self.app.switch_screen(UnsubscribingScreen(self._newsletters, mode="both", ai_mode=self._ai_mode))
 
     @on(Button.Pressed, "#btn-back")
     def handle_back(self) -> None:
@@ -834,15 +867,15 @@ class WelcomeScreen(Screen):
                 ),
                 Static(""),
                 Button(
-                    "Algorithm Scan Only  →",
-                    id="btn-start-algo",
+                    "AI Agent Filter  →",
+                    id="btn-start-ai",
                     variant="success",
                     classes="btn-full",
                 ),
                 Button(
-                    "AI Agent Filter  →",
-                    id="btn-start-ai",
-                    variant="primary",
+                    "Algorithm Scan Only  →",
+                    id="btn-start-algo",
+                    variant="default",
                     classes="btn-full",
                 ),
                 Button(
@@ -885,7 +918,7 @@ class WelcomeScreen(Screen):
         label.update(f"Connected: {email}" if email else "No account connected")
 
     @on(Button.Pressed, "#btn-start-algo")
-    def handle_start_algo(self) -> None:
+    async def handle_start_algo(self) -> None:
         if not is_authenticated():
             self.notify(
                 "Please connect your Gmail account first.",
@@ -893,7 +926,21 @@ class WelcomeScreen(Screen):
                 severity="warning",
             )
             return
-        self.app.push_screen(ScanOptionsScreen(ai_mode=False))
+        confirmed = await self.app.push_screen_wait(
+            WarningModal(
+                title="Algorithm scan may miss some newsletters",
+                body=(
+                    "Some senders tune their emails specifically to bypass\n"
+                    "spam and newsletter filters.\n\n"
+                    "The algorithm scan may not catch all of them, so results\n"
+                    "might not be totally accurate.\n\n"
+                    "For a more thorough scan, use AI Agent Filter instead."
+                ),
+                confirm_label="Continue anyway",
+            )
+        )
+        if confirmed:
+            self.app.push_screen(ScanOptionsScreen(ai_mode=False))
 
     @on(Button.Pressed, "#btn-start-ai")
     def handle_start_ai(self) -> None:
@@ -1093,6 +1140,8 @@ class ScanScreen(Screen):
         super().__init__()
         self._days = days
         self._ai_mode = ai_mode
+        self._interim_newsletters: list = []
+        self._interim_flagged: list = []
 
     def compose(self) -> ComposeResult:
         ai_note = "\nAI analysis will run after fetching." if self._ai_mode else ""
@@ -1153,36 +1202,28 @@ class ScanScreen(Screen):
                 nl_count = len(newsletters)
                 self.app.call_from_thread(self._set_ai_phase, nl_count, len(remaining))
 
-                if remaining:
-                    try:
-                        from scanner.ai_detector import classify_newsletters
+                try:
+                    from scanner.ai_detector import classify_newsletters
 
-                        def ai_log(msg: str) -> None:
-                            self.app.call_from_thread(self._update_ai_status, msg)
-                            self.app.call_from_thread(self._ai_log, msg)
-
-                        classify_newsletters(remaining, log=ai_log)
+                    # Phase 1 (auto): text metadata is token-efficient vs full email content
+                    flagged = []
+                    if remaining:
+                        classify_newsletters(remaining, log=self._ai_log_msg)
                         flagged = [nl for nl in remaining if nl.label in ("spam", "phishing")]
-                        if flagged:
-                            self.app.call_from_thread(
-                                self._ai_log,
-                                f"[bold yellow]── Found {len(flagged)} threat{'s' if len(flagged) != 1 else ''} ──[/bold yellow]",
-                            )
-                        newsletters = sorted(
-                            newsletters + flagged,
-                            key=lambda n: n.email_count,
-                            reverse=True,
+                    else:
+                        self.app.call_from_thread(
+                            self._ai_log, "[dim]No repeat non-newsletter senders to check.[/dim]"
                         )
-                    except Exception as exc:
-                        self.app.call_from_thread(self._show_ai_error, str(exc))
-                else:
-                    self.app.call_from_thread(
-                        self._ai_log, "[dim]No repeat non-newsletter senders to check.[/dim]"
-                    )
 
-            self.app.call_from_thread(
-                self.app.switch_screen, NewsletterListScreen(newsletters)
-            )
+                    self._interim_newsletters = newsletters
+                    self._interim_flagged = flagged
+                    self.app.call_from_thread(self._prompt_phase2)
+                except Exception as exc:
+                    self.app.call_from_thread(self._show_ai_error, str(exc))
+            else:
+                self.app.call_from_thread(
+                    self.app.switch_screen, NewsletterListScreen(newsletters)
+                )
         except Exception as exc:
             self.app.call_from_thread(self._show_error, str(exc))
 
@@ -1214,6 +1255,67 @@ class ScanScreen(Screen):
         self.query_one("#scan-ai-status", Label).update(f"[yellow]AI scan skipped: {msg}[/yellow]")
         self._ai_log(f"[red]✗ AI scan failed: {msg}[/red]")
 
+    def _ai_log_msg(self, msg: str) -> None:
+        """Thread-safe callback passed to classify_newsletters."""
+        self.app.call_from_thread(self._update_ai_status, msg)
+        self.app.call_from_thread(self._ai_log, msg)
+
+    async def _prompt_phase2(self) -> None:
+        nl_count = len(self._interim_newsletters)
+        flagged_count = len(self._interim_flagged)
+        if nl_count == 0:
+            self._finalize_scan()
+            return
+        confirmed = await self.app.push_screen_wait(
+            WarningModal(
+                title="Also verify algorithm-found newsletters?",
+                body=(
+                    f"Phase 1 complete — {flagged_count} threat{'s' if flagged_count != 1 else ''} "
+                    f"found among non-newsletter senders.\n\n"
+                    f"Phishing emails can spoof newsletter headers to bypass the algorithm.\n"
+                    f"Re-check {nl_count} algorithm-accepted newsletter{'s' if nl_count != 1 else ''} with AI?"
+                ),
+                confirm_label="Yes, verify newsletters",
+            )
+        )
+        if confirmed:
+            self._run_phase2()
+        else:
+            self._finalize_scan()
+
+    @work(thread=True)
+    def _run_phase2(self) -> None:
+        try:
+            from scanner.ai_detector import classify_newsletters
+            nl_count = len(self._interim_newsletters)
+            self.app.call_from_thread(
+                self._ai_log,
+                f"[bold cyan]── Re-checking {nl_count} algorithm-found newsletter{'s' if nl_count != 1 else ''} for engineered phishing ──[/bold cyan]",
+            )
+            classify_newsletters(self._interim_newsletters, log=self._ai_log_msg)
+        except Exception as exc:
+            self.app.call_from_thread(
+                self._ai_log, f"[red]Phase 2 failed: {str(exc)[:80]}[/red]"
+            )
+        self.app.call_from_thread(self._finalize_scan)
+
+    def _finalize_scan(self) -> None:
+        newsletters = self._interim_newsletters
+        flagged = self._interim_flagged
+        total_threats = len(flagged) + len(
+            [nl for nl in newsletters if nl.label in ("spam", "phishing")]
+        )
+        if total_threats:
+            self._ai_log(
+                f"[bold yellow]── Found {total_threats} threat{'s' if total_threats != 1 else ''} ──[/bold yellow]"
+            )
+        final = sorted(
+            newsletters + flagged,
+            key=lambda n: n.email_count,
+            reverse=True,
+        )
+        self.app.switch_screen(NewsletterListScreen(final))
+
     def _show_error(self, msg: str) -> None:
         self.query_one("#scan-status", Label).update(f"Something went wrong:\n{msg}")
         self.query_one(LoadingIndicator).display = False
@@ -1224,9 +1326,10 @@ class ScanScreen(Screen):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class NewsletterListScreen(Screen):
-    def __init__(self, newsletters: list[Newsletter]) -> None:
+    def __init__(self, newsletters: list[Newsletter], ai_mode: bool = False) -> None:
         super().__init__()
         self._newsletters = newsletters
+        self._ai_mode = ai_mode
 
     def compose(self) -> ComposeResult:
         from collections import Counter
@@ -1303,7 +1406,7 @@ class NewsletterListScreen(Screen):
             self.notify("Please select at least one newsletter first.", severity="warning")
             return
 
-        self.app.push_screen(ActionSelectScreen(chosen))
+        self.app.push_screen(ActionSelectScreen(chosen, ai_mode=self._ai_mode))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1319,10 +1422,11 @@ class UnsubscribingScreen(Screen):
         "both":    "Unsubscribing and deleting…",
     }
 
-    def __init__(self, newsletters: list[Newsletter], mode: str = "unsub") -> None:
+    def __init__(self, newsletters: list[Newsletter], mode: str = "unsub", ai_mode: bool = False) -> None:
         super().__init__()
         self._newsletters = newsletters
         self._mode = mode
+        self._ai_mode = ai_mode
         self._final_results: list[tuple[Newsletter, str, str]] = []
         self._final_deleted: int = 0
 
@@ -1338,7 +1442,11 @@ class UnsubscribingScreen(Screen):
                     classes="card",
                 )
             ),
-            Static("─── log ───────────────────────────────────────────────", id="log-header"),
+            Static(
+                "─── Agent log ──────────────────────────────────────────────" if self._ai_mode
+                else "─── log ───────────────────────────────────────────────",
+                id="log-header",
+            ),
             RichLog(id="progress-log", markup=True, highlight=False, wrap=True),
         )
         yield Footer()

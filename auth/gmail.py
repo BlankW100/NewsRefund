@@ -63,12 +63,12 @@ def get_credentials() -> Credentials:
 
 
 def is_authenticated() -> bool:
-    """Quick check — does a valid saved token exist?"""
+    """Quick check — does a usable saved token exist? (expired-but-refreshable counts as yes)"""
     if not TOKEN_PATH.exists():
         return False
     try:
         creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
-        return bool(creds and creds.valid)
+        return bool(creds and (creds.valid or (creds.expired and creds.refresh_token)))
     except Exception:
         return False
 
@@ -78,14 +78,21 @@ def get_connected_email() -> str | None:
     Return the Gmail address of the signed-in account, or None if not logged in.
     Result is cached in profile.json so we don't call the API on every launch.
     """
-    if not is_authenticated():
+    if not TOKEN_PATH.exists():
         return None
 
+    # Return the cached email without re-validating the token.
+    # Token validity only matters for API calls; logout() removes both files.
     if PROFILE_PATH.exists():
         try:
-            return json.loads(PROFILE_PATH.read_text()).get("email")
+            email = json.loads(PROFILE_PATH.read_text()).get("email")
+            if email:
+                return email
         except Exception:
             pass
+
+    if not is_authenticated():
+        return None
 
     try:
         from googleapiclient.discovery import build

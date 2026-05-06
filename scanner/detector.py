@@ -177,7 +177,6 @@ def detect_newsletters(messages: list[dict]) -> list[Newsletter]:
 def group_remaining(messages: list[dict], exclude_domains: set[str]) -> list[Newsletter]:
     """
     Group messages from senders NOT in exclude_domains.
-    Only includes senders with 2+ emails — one-off contacts are skipped.
     Returns Newsletter objects for AI threat analysis (no unsubscribe info).
     """
     groups: dict[str, dict] = {}
@@ -219,7 +218,6 @@ def group_remaining(messages: list[dict], exclude_domains: set[str]) -> list[New
                 sample_subjects=g["sample_subjects"],
             )
             for g in groups.values()
-            if g["count"] >= 2
         ],
         key=lambda n: n.email_count,
         reverse=True,

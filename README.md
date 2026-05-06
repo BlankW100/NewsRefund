@@ -115,24 +115,35 @@ Score each email:
 Group by sender domain, sort by email count
 ```
 
-### Scanning — AI Agent Filter (two-tier)
+### Scanning — AI Agent Filter (two-phase)
 
 ```
-Tier 1 — Algorithm (same as above)
+Phase 1 — Algorithm (same as above)
         │
         ├── score ≥ 2  →  newsletters list  [green newsletter]
         │
         └── score < 2  →  group_remaining()
                                │
-                               │  senders with 2+ emails only
-                               │  (one-off personal contacts skipped)
+                               │  ALL unique non-newsletter senders
+                               │  (including one-off contacts — phishing
+                               │   typically arrives in a single email)
                                ▼
-                          Tier 2 — AI classification
+                          Phase 1 AI — threat check
                                │
                                ├── spam      →  added to list  [yellow spam]
                                ├── phishing  →  added to list  [red phishing email]
-                               └── newsletter → silently dropped
-                                   (not shown — no action needed)
+                               └── other     →  silently dropped
+```
+
+After Phase 1 completes, a prompt offers an optional **Phase 2**: re-check the algorithm-found newsletters with AI to catch phishing emails that spoofed newsletter headers to bypass the algorithm.
+
+```
+Phase 2 (optional, user-confirmed)
+        │
+        └── re-classify algorithm-found newsletters
+                               │
+                               ├── phishing  →  relabelled  [red phishing email]
+                               └── newsletter → kept as-is
 ```
 
 The AI log panel shows live progress: provider, model, each sender analysed, and the result with reason.
@@ -183,7 +194,7 @@ Welcome → (Setup Guide) → Auth → Scan Options → Scanning → Newsletter 
 | Scan Options | Choose how many days back to scan |
 | Scanning | Progress bar + live AI log panel (AI mode only) |
 | Newsletter List | Colour-coded checklist with labels — tick to select |
-| Action Select | Choose Unsubscribe / Delete Emails / Both |
+| Action Select | Choose Unsubscribe / Delete / Both — AI mode offers Permanently Delete instead of Trash |
 | Unsubscribing | Live per-sender log (✓ success / ! manual / ✗ failed) |
 | Summary | Final counts + senders needing manual action |
 | API Keys | Manage keys for Anthropic, OpenAI, Google; select active provider and model |
@@ -278,7 +289,7 @@ python main.py
 - [x] Inbox verification pass after unsubscribing
 
 ### Phase 2 — AI Agent Filter
-- [x] Two-tier scan: algorithm detects newsletters, AI checks remaining senders
+- [x] Two-phase scan: algorithm detects newsletters, AI checks ALL remaining senders (Phase 1), optional re-check of algorithm-found newsletters (Phase 2)
 - [x] Labels: newsletter (green), spam (yellow), phishing email (red)
 - [x] Support for Anthropic, OpenAI, and Google Gemini
 - [x] Per-provider model selection (Haiku / Sonnet / Opus, GPT-4o-mini / GPT-4o, Gemini Flash / Pro)

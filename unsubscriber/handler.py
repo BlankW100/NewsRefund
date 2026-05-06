@@ -155,6 +155,53 @@ def delete_newsletter_emails(
     return trashed
 
 
+def permanently_delete_newsletter_emails(
+    domain: str,
+    gmail_service,
+    max_emails: int = 500,
+    log: Optional[LogCallback] = None,
+) -> int:
+    """
+    Permanently delete all emails from a sender domain (bypasses Trash).
+    Returns the number of emails deleted.
+    """
+    def _log(msg: str) -> None:
+        if log:
+            log(msg)
+
+    query = f"from:@{domain}"
+    deleted = 0
+    page_token = None
+    _log(f"Searching for emails from @{domain}…")
+
+    while deleted < max_emails:
+        params: dict = {
+            "userId": "me",
+            "q": query,
+            "maxResults": min(100, max_emails - deleted),
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        result = gmail_service.users().messages().list(**params).execute()
+        messages = result.get("messages", [])
+        if not messages:
+            _log("No more emails found")
+            break
+
+        _log(f"Permanently deleting {len(messages)} email(s)…")
+        for msg in messages:
+            gmail_service.users().messages().delete(userId="me", id=msg["id"]).execute()
+            deleted += 1
+
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+
+    _log(f"✓ {deleted} email(s) permanently deleted")
+    return deleted
+
+
 def check_inbox_count(domain: str, gmail_service) -> int:
     """Return number of inbox emails from domain. Returns -1 on API error."""
     try:
