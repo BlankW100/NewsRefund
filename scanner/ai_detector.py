@@ -122,10 +122,29 @@ def _call_google(prompt: str, api_key: str) -> tuple[str, str]:
     return _parse_json(resp.text.strip())
 
 
+def _call_ollama(prompt: str, api_key: str) -> tuple[str, str]:
+    import httpx
+    from auth.api_keys import get_model
+    base_url = api_key.rstrip("/")
+    resp = httpx.post(
+        f"{base_url}/api/chat",
+        json={
+            "model": get_model("ollama"),
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    content = resp.json()["message"]["content"].strip()
+    return _parse_json(content)
+
+
 _CALLERS = {
     "Anthropic (Claude)": _call_anthropic,
     "OpenAI (GPT)":       _call_openai,
     "Google (Gemini)":    _call_google,
+    "Ollama (Local)":     _call_ollama,
 }
 
 
@@ -156,10 +175,21 @@ def _test_google(api_key: str) -> None:
     next(iter(genai.list_models()))
 
 
+def _test_ollama(base_url: str) -> None:
+    import httpx
+    url = base_url.rstrip("/")
+    try:
+        resp = httpx.get(f"{url}/api/tags", timeout=5)
+        resp.raise_for_status()
+    except httpx.ConnectError:
+        raise ConnectionError(f"Cannot connect to Ollama at {url} — is 'ollama serve' running?")
+
+
 _TESTERS = {
     "Anthropic (Claude)": _test_anthropic,
     "OpenAI (GPT)":       _test_openai,
     "Google (Gemini)":    _test_google,
+    "Ollama (Local)":     _test_ollama,
 }
 
 

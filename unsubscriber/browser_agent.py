@@ -215,7 +215,7 @@ async def _ask_ai(
                 from auth.api_keys import get_model
                 c = anthropic.Anthropic(api_key=api_key)
                 m = c.messages.create(
-                    model=get_model("anthropic"), max_tokens=120,
+                    model=get_model("anthropic"), max_tokens=200,
                     messages=[{"role": "user", "content": prompt}],
                 )
                 block = m.content[0]
@@ -225,16 +225,30 @@ async def _ask_ai(
                 from auth.api_keys import get_model
                 c = openai.OpenAI(api_key=api_key)
                 content = c.chat.completions.create(
-                    model=get_model("openai"), max_tokens=120,
+                    model=get_model("openai"),
                     messages=[{"role": "user", "content": prompt}],
                 ).choices[0].message.content
                 raw = (content or "").strip()
             elif provider_name == "Google (Gemini)":
-                from google.generativeai import configure as _genai_configure  # type: ignore[attr-defined]
-                from google.generativeai import GenerativeModel as _GenModel    # type: ignore[attr-defined]
+                from google.generativeai import configure as _cfg  # type: ignore[attr-defined]
+                from google.generativeai import GenerativeModel as _GM  # type: ignore[attr-defined]
                 from auth.api_keys import get_model
-                _genai_configure(api_key=api_key)
-                raw = (_GenModel(get_model("google")).generate_content(prompt).text or "").strip()
+                _cfg(api_key=api_key)
+                raw = (_GM(get_model("google")).generate_content(prompt).text or "").strip()
+            elif provider_name == "Ollama (Local)":
+                import httpx
+                from auth.api_keys import get_model
+                resp = httpx.post(
+                    f"{api_key.rstrip('/')}/api/chat",
+                    json={
+                        "model": get_model("ollama"),
+                        "messages": [{"role": "user", "content": prompt}],
+                        "stream": False,
+                    },
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                raw = resp.json()["message"]["content"].strip()
 
             if raw.startswith("```"):
                 raw = raw.split("```")[1]

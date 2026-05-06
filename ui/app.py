@@ -193,6 +193,13 @@ Button {
 #scan-opt-actions Button {
     width: 1fr;
 }
+
+/* ── Ollama setup hint ─────────────────────────────────────────── */
+.ollama-hint {
+    color: #555577;
+    padding: 0 0 1 4;
+    height: auto;
+}
 /* ── Connected account label ───────────────────────────────── */
 #connected-label {
     text-align: center;
@@ -712,25 +719,25 @@ class ApiKeysScreen(Screen):
         for slug, display_name, _ in PROVIDERS:
             is_on = slug == selected
             current_model = get_model(slug)
-            rows.append(
-                Horizontal(
-                    Button(
-                        "✓" if is_on else "○",
-                        id=f"sel-{slug}",
-                        classes=f"select-btn {'select-btn-on' if is_on else 'select-btn-off'}",
-                    ),
-                    Label(display_name, classes="key-provider-label"),
-                    Input(
-                        value=saved.get(slug, ""),
-                        password=True,
-                        placeholder=f"Paste {display_name} key…",
-                        id=f"key-{slug}",
-                        classes="key-input",
-                    ),
-                    Button("Show", id=f"show-{slug}", classes="show-btn"),
-                    classes="key-row",
-                )
-            )
+            is_ollama = slug == "ollama"
+            key_row_children = [
+                Button(
+                    "✓" if is_on else "○",
+                    id=f"sel-{slug}",
+                    classes=f"select-btn {'select-btn-on' if is_on else 'select-btn-off'}",
+                ),
+                Label(display_name, classes="key-provider-label"),
+                Input(
+                    value=saved.get(slug, ""),
+                    password=not is_ollama,
+                    placeholder="http://localhost:11434" if is_ollama else f"Paste {display_name} key…",
+                    id=f"key-{slug}",
+                    classes="key-input",
+                ),
+            ]
+            if not is_ollama:
+                key_row_children.append(Button("Show", id=f"show-{slug}", classes="show-btn"))
+            rows.append(Horizontal(*key_row_children, classes="key-row"))
             rows.append(
                 Horizontal(
                     Label("Model:", classes="model-label"),
@@ -744,6 +751,17 @@ class ApiKeysScreen(Screen):
                     classes="model-row",
                 )
             )
+            if is_ollama:
+                rows.append(Static(
+                    "  Setup:\n"
+                    "  1. Open a terminal and run: ollama serve\n"
+                    "     (you can skip this if Ollama is already running in the background)\n"
+                    "  2. Pull the model you want (one-time, downloads the weights):\n"
+                    "       ollama pull llama3.2\n"
+                    "  3. Enter http://localhost:11434 in the field above (or your custom host)\n"
+                    "  4. Pick the same model name in the dropdown above, then Save",
+                    classes="ollama-hint",
+                ))
         rows += [
             Static(""),
             Label("", id="api-status"),
