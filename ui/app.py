@@ -45,7 +45,8 @@ from auth.gmail import (
 )
 from scanner.detector import Newsletter, detect_newsletters, group_remaining
 from scanner.fetcher import build_service, fetch_email_headers
-from unsubscriber.handler import check_inbox_count, delete_newsletter_emails, permanently_delete_newsletter_emails, unsubscribe
+from unsubscriber.agent import AgentResult, UnsubscribeAgent
+from unsubscriber.handler import check_inbox_count, delete_newsletter_emails, permanently_delete_newsletter_emails
 
 # ── Shared style ──────────────────────────────────────────────────────────────
 
@@ -192,18 +193,6 @@ Button {
 }
 #scan-opt-actions Button {
     width: 1fr;
-}
-
-/* ── Ollama setup hint ─────────────────────────────────────────── */
-.ollama-hint {
-    color: #555577;
-    padding: 0 0 1 4;
-    height: auto;
-}
-.detect-btn {
-    min-width: 14;
-    width: auto;
-    margin-left: 1;
 }
 /* ── Connected account label ───────────────────────────────── */
 #connected-label {
@@ -724,51 +713,38 @@ class ApiKeysScreen(Screen):
         for slug, display_name, _ in PROVIDERS:
             is_on = slug == selected
             current_model = get_model(slug)
-            is_ollama = slug == "ollama"
-            key_row_children = [
-                Button(
-                    "✓" if is_on else "○",
-                    id=f"sel-{slug}",
-                    classes=f"select-btn {'select-btn-on' if is_on else 'select-btn-off'}",
-                ),
-                Label(display_name, classes="key-provider-label"),
-                Input(
-                    value=saved.get(slug, ""),
-                    password=not is_ollama,
-                    placeholder="http://localhost:11434" if is_ollama else f"Paste {display_name} key…",
-                    id=f"key-{slug}",
-                    classes="key-input",
-                ),
-            ]
-            if not is_ollama:
-                key_row_children.append(Button("Show", id=f"show-{slug}", classes="show-btn"))
-            rows.append(Horizontal(*key_row_children, classes="key-row"))
-            model_row_children = [
-                Label("Model:", classes="model-label"),
-                Select(
-                    options=PROVIDER_MODELS.get(slug, []),
-                    value=current_model,
-                    id=f"model-{slug}",
-                    classes="model-select",
-                    allow_blank=False,
-                ),
-            ]
-            if is_ollama:
-                model_row_children.append(
-                    Button("Auto Detect", id="btn-detect-ollama", classes="detect-btn")
+            rows.append(
+                Horizontal(
+                    Button(
+                        "✓" if is_on else "○",
+                        id=f"sel-{slug}",
+                        classes=f"select-btn {'select-btn-on' if is_on else 'select-btn-off'}",
+                    ),
+                    Label(display_name, classes="key-provider-label"),
+                    Input(
+                        value=saved.get(slug, ""),
+                        password=True,
+                        placeholder=f"Paste {display_name} key…",
+                        id=f"key-{slug}",
+                        classes="key-input",
+                    ),
+                    Button("Show", id=f"show-{slug}", classes="show-btn"),
+                    classes="key-row",
                 )
-            rows.append(Horizontal(*model_row_children, classes="model-row"))
-            if is_ollama:
-                rows.append(Static(
-                    "  Setup:\n"
-                    "  1. Open a terminal and run: ollama serve\n"
-                    "     (you can skip this if Ollama is already running in the background)\n"
-                    "  2. Pull the model you want (one-time, downloads the weights):\n"
-                    "       ollama pull llama3.2\n"
-                    "  3. Enter http://localhost:11434 in the field above (or your custom host)\n"
-                    "  4. Pick the same model name in the dropdown above, then Save",
-                    classes="ollama-hint",
-                ))
+            )
+            rows.append(
+                Horizontal(
+                    Label("Model:", classes="model-label"),
+                    Select(
+                        options=PROVIDER_MODELS.get(slug, []),
+                        value=current_model,
+                        id=f"model-{slug}",
+                        classes="model-select",
+                        allow_blank=False,
+                    ),
+                    classes="model-row",
+                )
+            )
         rows += [
             Static(""),
             Label("", id="api-status"),
@@ -800,9 +776,6 @@ class ApiKeysScreen(Screen):
             self._toggle_selection(btn_id[4:])
         elif btn_id.startswith("show-"):
             self._toggle_show(btn_id[5:])
-        elif btn_id == "btn-detect-ollama":
-            base_url = self.query_one("#key-ollama", Input).value.strip() or "http://localhost:11434"
-            self._detect_ollama_models(base_url)
         elif btn_id == "btn-save":
             self._save()
         elif btn_id == "btn-test":
@@ -877,30 +850,6 @@ class ApiKeysScreen(Screen):
             lbl = self.query_one("#api-status", Label)
             lbl.update(f"[green]✓ Connected — {msg}[/green]" if ok else f"[red]✗ {msg}[/red]")
         self.app.call_from_thread(_update)
-
-    @work(thread=True)
-    def _detect_ollama_models(self, base_url: str) -> None:
-        import httpx
-        def _set_status(msg: str) -> None:
-            self.query_one("#api-status", Label).update(msg)
-        self.app.call_from_thread(_set_status, "Detecting Ollama models…")
-        try:
-            resp = httpx.get(f"{base_url.rstrip('/')}/api/tags", timeout=5)
-            resp.raise_for_status()
-            models = sorted(m["name"] for m in resp.json().get("models", []))
-            if not models:
-                self.app.call_from_thread(
-                    _set_status, "[yellow]No models found — run: ollama pull llama3.2[/yellow]"
-                )
-                return
-            options = [(name, name) for name in models]
-            summary = ", ".join(models[:4]) + ("…" if len(models) > 4 else "")
-            def _update() -> None:
-                self.query_one("#model-ollama", Select).set_options(options)
-                _set_status(f"[green]Found {len(models)} model{'s' if len(models) != 1 else ''}: {summary}[/green]")
-            self.app.call_from_thread(_update)
-        except Exception as exc:
-            self.app.call_from_thread(_set_status, f"[red]Ollama error: {str(exc)[:120]}[/red]")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1443,7 +1392,7 @@ class NewsletterListScreen(Screen):
 
     @staticmethod
     def _item_label(n: Newsletter) -> str:
-        method = f"[{n.method_label}]" if n.can_auto_unsubscribe else "[Manual]"
+        method_text = n.method_label if n.can_auto_unsubscribe else "Manual"
         email = n.sender_email if len(n.sender_email) <= 38 else n.sender_email[:35] + "..."
         _TAG = {
             "newsletter": "[green]newsletter[/green]",
@@ -1451,7 +1400,7 @@ class NewsletterListScreen(Screen):
             "phishing":   "[red]phishing email[/red]",
         }
         tag = _TAG.get(n.label, "[green]newsletter[/green]")
-        return f"{n.sender_name:<25}  {email:<38}  {n.email_count:>3} emails   {method:<12}  {tag}"
+        return f"{n.sender_name:<25}  {email:<38}  {n.email_count:>3} emails   {method_text:<12}  {tag}"
 
     @on(Button.Pressed, "#btn-all")
     def select_all(self) -> None:
@@ -1544,9 +1493,13 @@ class UnsubscribingScreen(Screen):
                 nl_result, nl_msg = "success", ""
 
                 if self._mode in ("unsub", "both"):
-                    nl_result, nl_msg = loop.run_until_complete(
-                        unsubscribe(nl, service, log=log_cb)
+                    force_block = nl.label == "phishing"
+                    agent = UnsubscribeAgent(
+                        nl, service, force_block=force_block, log=log_cb
                     )
+                    agent_result: AgentResult = loop.run_until_complete(agent.run())
+                    nl_result = "success" if agent_result.success else "failed"
+                    nl_msg = f"[{agent_result.phase_label}] {agent_result.message}"
                     self.app.call_from_thread(self._log_result, nl, nl_result, nl_msg)
 
                 if self._mode in ("delete", "both"):

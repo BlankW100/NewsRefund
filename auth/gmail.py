@@ -7,10 +7,11 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# Modify (read + trash) + send (needed for mailto: unsubscribe)
+# modify + send + settings.basic (Phase-4 Gmail block filters)
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.settings.basic",
 ]
 
 CONFIG_DIR = Path.home() / ".newsrefund"

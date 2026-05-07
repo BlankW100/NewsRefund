@@ -12,10 +12,34 @@ _VALID_LABELS = {"newsletter", "spam", "phishing"}
 _SEVERITY = {"phishing": 2, "spam": 1, "newsletter": 0}
 _LABEL_COLOR = {"newsletter": "green", "spam": "yellow", "phishing": "red"}
 
+# Root domains that should never be classified as phishing.
+# Subdomains (e.g. accounts.google.com) are covered by checking the root.
+_TRUSTED_ROOTS = frozenset({
+    "google.com", "gmail.com", "googlemail.com", "youtube.com",
+    "microsoft.com", "outlook.com", "live.com", "hotmail.com", "office.com",
+    "apple.com", "icloud.com",
+    "amazon.com", "amazonaws.com",
+    "github.com", "gitlab.com",
+    "linkedin.com", "twitter.com", "x.com", "facebook.com", "instagram.com",
+    "paypal.com", "stripe.com",
+    "netflix.com", "spotify.com", "adobe.com", "dropbox.com",
+    "slack.com", "zoom.us", "notion.so",
+})
+
 
 def _sanitize(text: str) -> str:
     """Strip control characters (except newline/tab) that can corrupt API requests."""
     return "".join(ch for ch in text if ch >= " " or ch in "\n\t").strip()
+
+
+def _root_domain(domain: str) -> str:
+    """Return the registrable root of a domain (last two labels)."""
+    parts = domain.lower().strip(".").split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else domain.lower()
+
+
+def _is_trusted(domain: str) -> bool:
+    return _root_domain(domain) in _TRUSTED_ROOTS
 
 
 def detect_provider() -> tuple[str, str] | None:
@@ -46,10 +70,20 @@ def _build_header_prompt(headers: dict) -> str:
     precedence  = _sanitize(headers.get("precedence", "")) or "not present"
     x_mailer    = _sanitize(headers.get("x-mailer", "")) or "not present"
     x_campaign  = _sanitize(headers.get("x-campaign", "")) or "not present"
+    from_domain = from_h.split("@")[-1].rstrip(">").strip().lower() if "@" in from_h else ""
+    trusted_note = (
+        f'IMPORTANT: The sender domain "{from_domain}" belongs to a well-known, '
+        f"trusted service. Do NOT label it \"phishing\" unless the display name "
+        f"claims to be a completely different brand (e.g. display says \"PayPal\" "
+        f"but domain is unrelated). Spoofed lookalike domains look like "
+        f'"g00gle.com", "accounts-google.net", etc. — not the real domain.\n\n'
+        if from_domain and _is_trusted(from_domain) else ""
+    )
     return (
         "You are an email classification assistant. Your ONLY task is to analyze the email "
         "headers below and output a single JSON object. Do not explain, do not ask questions, "
         "do not add any text outside the JSON.\n\n"
+        f"{trusted_note}"
         f"From: {from_h}\n"
         f"Subject: {subject}\n"
         f"List-Unsubscribe: {list_unsub}\n"
@@ -60,7 +94,8 @@ def _build_header_prompt(headers: dict) -> str:
         "Classify as exactly one of:\n"
         '  "newsletter" — legitimate subscription/marketing from a real brand\n'
         '  "spam"       — unsolicited bulk mail or low-quality promotions\n'
-        '  "phishing"   — impersonation, scam, credential harvesting, or spoofed domain\n\n'
+        '  "phishing"   — impersonation, scam, credential harvesting, OR display name '
+        "claims to be Brand X but the actual From domain has no relation to Brand X\n\n"
         'Output format (JSON only, no markdown, no extra text):\n'
         '{"label": "newsletter|spam|phishing", "reason": "one sentence"}'
     )
@@ -122,29 +157,10 @@ def _call_google(prompt: str, api_key: str) -> tuple[str, str]:
     return _parse_json(resp.text.strip())
 
 
-def _call_ollama(prompt: str, api_key: str) -> tuple[str, str]:
-    import httpx
-    from auth.api_keys import get_model
-    base_url = api_key.rstrip("/")
-    resp = httpx.post(
-        f"{base_url}/api/chat",
-        json={
-            "model": get_model("ollama"),
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-        },
-        timeout=120,
-    )
-    resp.raise_for_status()
-    content = resp.json()["message"]["content"].strip()
-    return _parse_json(content)
-
-
 _CALLERS = {
     "Anthropic (Claude)": _call_anthropic,
     "OpenAI (GPT)":       _call_openai,
     "Google (Gemini)":    _call_google,
-    "Ollama (Local)":     _call_ollama,
 }
 
 
@@ -175,21 +191,10 @@ def _test_google(api_key: str) -> None:
     next(iter(genai.list_models()))
 
 
-def _test_ollama(base_url: str) -> None:
-    import httpx
-    url = base_url.rstrip("/")
-    try:
-        resp = httpx.get(f"{url}/api/tags", timeout=5)
-        resp.raise_for_status()
-    except httpx.ConnectError:
-        raise ConnectionError(f"Cannot connect to Ollama at {url} — is 'ollama serve' running?")
-
-
 _TESTERS = {
     "Anthropic (Claude)": _test_anthropic,
     "OpenAI (GPT)":       _test_openai,
     "Google (Gemini)":    _test_google,
-    "Ollama (Local)":     _test_ollama,
 }
 
 
@@ -267,15 +272,19 @@ def classify_messages(
             log(f"[dim]{i}/{total}[/dim]  {sender_display}{subj_display}")
 
         try:
-            label, reason = caller(_build_header_prompt(headers), api_key)
+            if _is_trusted(domain):
+                label, reason = "newsletter", "trusted sender domain — skipped AI check"
+                if log:
+                    log(f"  [green]→ newsletter[/green]  [dim]{reason}[/dim]")
+            else:
+                label, reason = caller(_build_header_prompt(headers), api_key)
+                if log:
+                    color = _LABEL_COLOR.get(label, "green")
+                    log(f"  [{color}]→ {label}[/{color}]  [dim]{reason}[/dim]")
 
             current = domain_results.get(domain)
             if current is None or _SEVERITY.get(label, 0) > _SEVERITY.get(current[0], 0):
                 domain_results[domain] = (label, reason)
-
-            if log:
-                color = _LABEL_COLOR.get(label, "green")
-                log(f"  [{color}]→ {label}[/{color}]  [dim]{reason}[/dim]")
         except Exception as exc:
             if log:
                 log(f"  [yellow]→ could not classify ({str(exc)[:200]})[/yellow]")
@@ -284,3 +293,66 @@ def classify_messages(
         log("[bold cyan]── Classification complete ──[/bold cyan]")
 
     return domain_results
+
+
+def classify_newsletters(
+    newsletters: list,
+    log: Optional[LogCallback] = None,
+) -> None:
+    """
+    Re-classify a list of Newsletter objects using AI and update their
+    label / label_reason fields in-place.
+
+    Uses the same header-prompt logic as classify_messages, but works
+    directly from the already-parsed Newsletter fields instead of raw
+    Gmail message dicts.
+    """
+    provider = detect_provider()
+    if provider is None:
+        raise ValueError(
+            "No AI API key found. Set one of:\n"
+            "  ANTHROPIC_API_KEY  (Anthropic / Claude)\n"
+            "  OPENAI_API_KEY     (OpenAI / GPT)\n"
+            "  GOOGLE_API_KEY     (Google / Gemini)"
+        )
+
+    provider_name, api_key = provider
+    caller = _CALLERS[provider_name]
+    total = len(newsletters)
+
+    if log:
+        from auth.api_keys import PROVIDERS as _P, get_model as _gm
+        slug = next((s for s, n, _ in _P if n == provider_name), "")
+        model_id = _gm(slug) if slug else "unknown"
+        log(f"[bold cyan]Provider: {provider_name}[/bold cyan]  [dim]({model_id})[/dim]")
+        log(f"Re-checking {total} newsletter{'s' if total != 1 else ''} for phishing…")
+
+    for i, nl in enumerate(newsletters, 1):
+        if log:
+            log(f"[dim]{i}/{total}[/dim]  {_sanitize(nl.sender_name)}  [dim]<{nl.sender_email}>[/dim]")
+
+        try:
+            if _is_trusted(nl.domain):
+                nl.label = "newsletter"
+                nl.label_reason = "trusted sender domain — skipped AI check"
+                if log:
+                    log(f"  [green]→ newsletter[/green]  [dim]{nl.label_reason}[/dim]")
+                continue
+
+            headers = {
+                "from": f"{nl.sender_name} <{nl.sender_email}>",
+                "subject": nl.sample_subjects[0] if nl.sample_subjects else "",
+                "list-unsubscribe": nl.unsubscribe_url or nl.unsubscribe_mailto or "",
+            }
+            label, reason = caller(_build_header_prompt(headers), api_key)
+            nl.label = label
+            nl.label_reason = reason
+            if log:
+                color = _LABEL_COLOR.get(label, "green")
+                log(f"  [{color}]→ {label}[/{color}]  [dim]{reason}[/dim]")
+        except Exception as exc:
+            if log:
+                log(f"  [yellow]→ could not classify ({str(exc)[:200]})[/yellow]")
+
+    if log:
+        log("[bold cyan]── Re-check complete ──[/bold cyan]")

@@ -12,7 +12,6 @@ PROVIDERS: list[tuple[str, str, str]] = [
     ("anthropic", "Anthropic (Claude)", "ANTHROPIC_API_KEY"),
     ("openai",    "OpenAI (GPT)",       "OPENAI_API_KEY"),
     ("google",    "Google (Gemini)",    "GOOGLE_API_KEY"),
-    ("ollama",    "Ollama (Local)",     "OLLAMA_BASE_URL"),
 ]
 
 # (display label, model id) per provider
@@ -30,22 +29,12 @@ PROVIDER_MODELS: dict[str, list[tuple[str, str]]] = {
         ("Gemini 2.5 Flash — fast & cheap", "gemini-2.5-flash"),
         ("Gemini 2.5 Pro   — most capable", "gemini-2.5-pro"),
     ],
-    "ollama": [
-        ("llama3.2  — recommended",   "llama3.2"),
-        ("llama3.1  — larger",        "llama3.1"),
-        ("mistral   — alternative",   "mistral"),
-        ("phi3      — fast & small",  "phi3"),
-        ("gemma2    — Google",        "gemma2"),
-        ("qwen2     — Alibaba",       "qwen2"),
-        ("deepseek-r1 — reasoning",   "deepseek-r1"),
-    ],
 }
 
 DEFAULT_MODELS: dict[str, str] = {
     "anthropic": "claude-haiku-4-5-20251001",
     "openai":    "gpt-4o-mini",
     "google":    "gemini-2.5-flash",
-    "ollama":    "llama3.2",
 }
 
 
