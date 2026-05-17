@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Callable, Optional
 
 from scanner.detector import Newsletter
@@ -38,8 +39,17 @@ def _root_domain(domain: str) -> str:
     return ".".join(parts[-2:]) if len(parts) >= 2 else domain.lower()
 
 
-def _is_trusted(domain: str) -> bool:
-    return _root_domain(domain) in _TRUSTED_ROOTS
+def _authenticated_domain(headers: dict) -> str | None:
+    auth_results = headers.get("authentication-results", "")
+    m = re.search(r"dkim=pass[^;]*?\bd=([\w.-]+)", auth_results, re.I)
+    return m.group(1).lower() if m else None
+
+
+def _is_trusted(headers: dict) -> bool:
+    verified = _authenticated_domain(headers)
+    if not verified:
+        return False
+    return _root_domain(verified) in _TRUSTED_ROOTS
 
 
 def detect_provider() -> tuple[str, str] | None:
@@ -77,7 +87,7 @@ def _build_header_prompt(headers: dict) -> str:
         f"claims to be a completely different brand (e.g. display says \"PayPal\" "
         f"but domain is unrelated). Spoofed lookalike domains look like "
         f'"g00gle.com", "accounts-google.net", etc. — not the real domain.\n\n'
-        if from_domain and _is_trusted(from_domain) else ""
+        if from_domain and _is_trusted(headers) else ""
     )
     return (
         "You are an email classification assistant. Your ONLY task is to analyze the email "
@@ -272,7 +282,7 @@ def classify_messages(
             log(f"[dim]{i}/{total}[/dim]  {sender_display}{subj_display}")
 
         try:
-            if _is_trusted(domain):
+            if _is_trusted(headers):
                 label, reason = "newsletter", "trusted sender domain — skipped AI check"
                 if log:
                     log(f"  [green]→ newsletter[/green]  [dim]{reason}[/dim]")
@@ -332,18 +342,18 @@ def classify_newsletters(
             log(f"[dim]{i}/{total}[/dim]  {_sanitize(nl.sender_name)}  [dim]<{nl.sender_email}>[/dim]")
 
         try:
-            if _is_trusted(nl.domain):
+            headers = {
+                "from": f"{nl.sender_name} <{nl.sender_email}>",
+                "subject": nl.sample_subjects[0] if nl.sample_subjects else "",
+                "list-unsubscribe": nl.unsubscribe_url or nl.unsubscribe_mailto or "",
+            }
+            if _is_trusted(headers):
                 nl.label = "newsletter"
                 nl.label_reason = "trusted sender domain — skipped AI check"
                 if log:
                     log(f"  [green]→ newsletter[/green]  [dim]{nl.label_reason}[/dim]")
                 continue
 
-            headers = {
-                "from": f"{nl.sender_name} <{nl.sender_email}>",
-                "subject": nl.sample_subjects[0] if nl.sample_subjects else "",
-                "list-unsubscribe": nl.unsubscribe_url or nl.unsubscribe_mailto or "",
-            }
             label, reason = caller(_build_header_prompt(headers), api_key)
             nl.label = label
             nl.label_reason = reason

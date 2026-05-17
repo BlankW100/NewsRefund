@@ -1503,7 +1503,10 @@ class UnsubscribingScreen(Screen):
                     self.app.call_from_thread(self._log_result, nl, nl_result, nl_msg)
 
                 if self._mode in ("delete", "both"):
-                    deleted = delete_newsletter_emails(nl.domain, service, log=log_cb)
+                    if self._ai_mode:
+                        deleted = permanently_delete_newsletter_emails(nl.domain, service, log=log_cb)
+                    else:
+                        deleted = delete_newsletter_emails(nl.domain, service, log=log_cb)
                     deleted_count += deleted
                     if self._mode == "delete":
                         nl_result = "success"

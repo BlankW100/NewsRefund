@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import re
 import urllib.parse
 from dataclasses import dataclass
@@ -47,6 +48,25 @@ _PLAYWRIGHT_CONFIRM_RE = re.compile(
     r"you.ve been unsubscribed|successfully removed|confirmed|opt.?out complete",
     re.I,
 )
+
+
+def _safe_to_fetch(url: str) -> bool:
+    try:
+        u = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    if u.scheme not in ("http", "https"):
+        return False
+    if not u.hostname:
+        return False
+    try:
+        ip = ipaddress.ip_address(u.hostname)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return False
+    except ValueError:
+        if u.hostname in ("localhost",) or u.hostname.endswith(".local"):
+            return False
+    return True
 
 
 # ── Result dataclass ──────────────────────────────────────────────────────────
@@ -226,6 +246,8 @@ class UnsubscribeAgent:
             href: str = tag["href"].strip()
             if not href.startswith("http"):
                 continue
+            if not _safe_to_fetch(href):
+                continue
             text = tag.get_text(strip=True)
             score = (
                 (2 if _UNSUB_KEYWORD_RE.search(href) else 0)
@@ -238,6 +260,8 @@ class UnsubscribeAgent:
     # ── Phase 3: Playwright stubborn path ─────────────────────────────────────
 
     async def _phase3_playwright(self, url: str) -> AgentResult:
+        if not _safe_to_fetch(url):
+            return AgentResult(3, False, "playwright", f"Blocked unsafe URL: {url}")
         self._log(f"[Phase 3] Playwright → {url}")
         try:
             from playwright.async_api import async_playwright  # lazy import
@@ -336,7 +360,18 @@ class UnsubscribeAgent:
 
     # ── HTTP helpers ──────────────────────────────────────────────────────────
 
+    def _looks_unsubscribed(self, body: str) -> tuple[bool, str | None]:
+        if _SUCCESS_RE.search(body):
+            return True, "confirmed via page content"
+        if _CONFIRM_FORM_RE.search(body) or (
+            "<form" in body.lower() and "unsubscrib" in body.lower()
+        ):
+            return False, "page requires manual confirmation"
+        return False, None
+
     async def _http_post_one_click(self, url: str) -> tuple[bool, str]:
+        if not _safe_to_fetch(url):
+            return False, f"Blocked unsafe URL: {url}"
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
                 r = await client.post(
@@ -344,13 +379,22 @@ class UnsubscribeAgent:
                     data={"List-Unsubscribe": "One-Click"},
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                 )
-            if r.status_code < 400:
-                return True, f"Unsubscribed (one-click POST {r.status_code})"
-            return False, f"POST returned {r.status_code}"
+            if not _safe_to_fetch(str(r.url)):
+                return False, f"Redirect led to unsafe URL: {r.url}"
+            if r.status_code >= 400:
+                return False, f"POST returned {r.status_code}"
+            ok, msg = self._looks_unsubscribed(r.text)
+            if ok:
+                return True, msg
+            if msg:
+                return False, msg
+            return False, f"POST {r.status_code} — no confirmation marker; escalating"
         except Exception as exc:
             return False, str(exc)
 
     async def _http_get(self, url: str) -> tuple[bool, str]:
+        if not _safe_to_fetch(url):
+            return False, f"Blocked unsafe URL: {url}"
         try:
             async with httpx.AsyncClient(
                 follow_redirects=True,
@@ -358,6 +402,8 @@ class UnsubscribeAgent:
                 headers={"User-Agent": "Mozilla/5.0"},
             ) as client:
                 r = await client.get(url)
+            if not _safe_to_fetch(str(r.url)):
+                return False, f"Redirect led to unsafe URL: {r.url}"
             if r.status_code >= 400:
                 return False, f"HTTP {r.status_code}"
             if _SUCCESS_RE.search(r.text):
@@ -366,9 +412,7 @@ class UnsubscribeAgent:
                 "<form" in r.text.lower() and "unsubscrib" in r.text.lower()
             ):
                 return False, "Page requires manual confirmation (form/button)"
-            if len(r.text) < 5_000:
-                return True, f"Unsubscribed (HTTP {r.status_code})"
-            return False, f"HTTP {r.status_code} — no confirmation text found"
+            return False, f"HTTP {r.status_code} — no confirmation marker found; escalating to Phase 3"
         except Exception as exc:
             return False, str(exc)
 
