@@ -18,6 +18,7 @@ class Newsletter:
     label: str = "newsletter"   # "newsletter" | "spam" | "phishing"
     label_reason: str = ""
     sample_subjects: list[str] = field(default_factory=list)
+    snippet: str = ""
 
     @property
     def can_auto_unsubscribe(self) -> bool:
@@ -121,6 +122,7 @@ def detect_newsletters(messages: list[dict]) -> list[Newsletter]:
         name, email, domain = _parse_sender(from_header)
         date = headers.get("date", "")
         subject = headers.get("subject", "")
+        snippet = msg.get("snippet", "")
 
         mailto, url = None, None
         unsub_val = headers.get("list-unsubscribe", "")
@@ -140,6 +142,7 @@ def detect_newsletters(messages: list[dict]) -> list[Newsletter]:
                 "unsubscribe_url": url,
                 "one_click_post": one_click,
                 "sample_subjects": [subject] if subject else [],
+                "snippet": snippet,
             }
         else:
             g = groups[domain]
@@ -166,6 +169,7 @@ def detect_newsletters(messages: list[dict]) -> list[Newsletter]:
                 unsubscribe_url=g["unsubscribe_url"],
                 one_click_post=g["one_click_post"],
                 sample_subjects=g["sample_subjects"],
+                snippet=g["snippet"],
             )
             for g in groups.values()
         ],
@@ -191,6 +195,7 @@ def group_remaining(messages: list[dict], exclude_domains: set[str]) -> list[New
             continue
         subject = headers.get("subject", "")
         date = headers.get("date", "")
+        snippet = msg.get("snippet", "")
 
         if domain not in groups:
             groups[domain] = {
@@ -200,6 +205,7 @@ def group_remaining(messages: list[dict], exclude_domains: set[str]) -> list[New
                 "count": 1,
                 "last_received": date,
                 "sample_subjects": [subject] if subject else [],
+                "snippet": snippet,
             }
         else:
             g = groups[domain]
@@ -216,6 +222,7 @@ def group_remaining(messages: list[dict], exclude_domains: set[str]) -> list[New
                 email_count=g["count"],
                 last_received=g["last_received"],
                 sample_subjects=g["sample_subjects"],
+                snippet=g["snippet"],
             )
             for g in groups.values()
         ],

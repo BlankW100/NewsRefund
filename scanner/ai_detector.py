@@ -71,8 +71,8 @@ def detect_provider() -> tuple[str, str] | None:
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
-def _build_header_prompt(headers: dict) -> str:
-    """Build a classification prompt from raw Gmail message headers."""
+def _build_header_prompt(headers: dict, snippet: str = "") -> str:
+    """Build a classification prompt from raw Gmail message headers and optional body snippet."""
     from_h      = _sanitize(headers.get("from", "(unknown)"))
     subject     = _sanitize(headers.get("subject", "(none)"))
     list_unsub  = _sanitize(headers.get("list-unsubscribe", "")) or "not present"
@@ -89,10 +89,11 @@ def _build_header_prompt(headers: dict) -> str:
         f'"g00gle.com", "accounts-google.net", etc. — not the real domain.\n\n'
         if from_domain and _is_trusted(headers) else ""
     )
+    snippet_line = f"Body preview: {_sanitize(snippet)}\n" if snippet.strip() else ""
     return (
         "You are an email classification assistant. Your ONLY task is to analyze the email "
-        "headers below and output a single JSON object. Do not explain, do not ask questions, "
-        "do not add any text outside the JSON.\n\n"
+        "headers and body preview below and output a single JSON object. Do not explain, "
+        "do not ask questions, do not add any text outside the JSON.\n\n"
         f"{trusted_note}"
         f"From: {from_h}\n"
         f"Subject: {subject}\n"
@@ -100,7 +101,8 @@ def _build_header_prompt(headers: dict) -> str:
         f"List-Id: {list_id}\n"
         f"Precedence: {precedence}\n"
         f"X-Mailer: {x_mailer}\n"
-        f"X-Campaign: {x_campaign}\n\n"
+        f"X-Campaign: {x_campaign}\n"
+        f"{snippet_line}\n"
         "Classify as exactly one of:\n"
         '  "newsletter" — legitimate subscription/marketing from a real brand\n'
         '  "spam"       — unsolicited bulk mail or low-quality promotions\n'
@@ -274,6 +276,7 @@ def classify_messages(
         headers = _extract_headers(msg)
         from_h = headers.get("from", "")
         subject = _sanitize(headers.get("subject", ""))
+        snippet = msg.get("snippet", "")
         _, _, domain = _parse_sender(from_h) if from_h else ("", "", "unknown")
 
         if log:
@@ -287,7 +290,7 @@ def classify_messages(
                 if log:
                     log(f"  [green]→ newsletter[/green]  [dim]{reason}[/dim]")
             else:
-                label, reason = caller(_build_header_prompt(headers), api_key)
+                label, reason = caller(_build_header_prompt(headers, snippet), api_key)
                 if log:
                     color = _LABEL_COLOR.get(label, "green")
                     log(f"  [{color}]→ {label}[/{color}]  [dim]{reason}[/dim]")
@@ -354,7 +357,7 @@ def classify_newsletters(
                     log(f"  [green]→ newsletter[/green]  [dim]{nl.label_reason}[/dim]")
                 continue
 
-            label, reason = caller(_build_header_prompt(headers), api_key)
+            label, reason = caller(_build_header_prompt(headers, nl.snippet), api_key)
             nl.label = label
             nl.label_reason = reason
             if log:
