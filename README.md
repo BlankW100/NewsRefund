@@ -59,12 +59,14 @@ newsrefund/
 │   └── api_keys.py            # AI provider key storage (~/.newsrefund/api_keys.json)
 │
 ├── scanner/
-│   ├── fetcher.py             # Gmail API — fetch last N days (metadata only)
+│   ├── fetcher.py             # Gmail API — fetch last N days (headers + snippet)
 │   ├── detector.py            # Score emails, group newsletters; group_remaining for AI
-│   └── ai_detector.py         # Classify non-newsletter senders via AI provider
+│   └── ai_detector.py         # Classify senders via AI — uses headers + body snippet
 │
 ├── unsubscriber/
-│   └── handler.py             # Execute unsubscribes: RFC 8058 → HTTPS GET → mailto
+│   ├── agent.py               # 4-phase unsubscribe pipeline orchestrator
+│   ├── browser_agent.py       # AI-guided Playwright automation (Phase 3)
+│   └── handler.py             # Low-level unsubscribe methods: POST, GET, mailto
 │
 └── ui/
     └── app.py                 # Textual TUI — screens, keyboard + mouse support
@@ -100,16 +102,21 @@ credentials.json present?
 ### Scanning — Algorithm Only
 
 ```
-Fetch up to 500 email headers from last N days
+Fetch up to 500 email headers + body preview (snippet) from last N days
         │
         ▼
 Score each email:
-  +3  List-Unsubscribe header
-  +2  List-Id header
+  +3  List-Unsubscribe header (RFC 2369 — mandated for all bulk senders)
+  +2  List-Id header (RFC 2919 — mailing list identifier)
   +2  Precedence: bulk / list
-  +1  X-Campaign or X-Mailer header
-  +1  From matches noreply / newsletter / digest / etc.
-  Score ≥ 2 → newsletter  [green]
+  +2  Feedback-ID or X-Feedback-ID (ESP platform vouching)
+  +1  List-Archive or List-Help (RFC 2369 compliance headers)
+  +1  List-Post: NO (announcement-only list signal)
+  +1  ESP header prefix (x-mc-, x-sg-, x-klaviyo-, x-hubspot-, etc.)
+  +1  From matches noreply / no-reply / newsletter / digest / etc.
+  -1  List-Unsubscribe present but no List-Id or Feedback-ID (faked header pattern)
+  -1  Precedence: junk (set by spam filters, not senders)
+  Score ≥ 4 → newsletter  [green]
         │
         ▼
 Group by sender domain, sort by email count
@@ -120,15 +127,16 @@ Group by sender domain, sort by email count
 ```
 Phase 1 — Algorithm (same as above)
         │
-        ├── score ≥ 2  →  newsletters list  [green newsletter]
+        ├── score ≥ 4  →  newsletters list  [green newsletter]
         │
-        └── score < 2  →  group_remaining()
+        └── score < 4  →  group_remaining()
                                │
                                │  ALL unique non-newsletter senders
                                │  (including one-off contacts — phishing
                                │   typically arrives in a single email)
                                ▼
                           Phase 1 AI — threat check
+                          (uses headers + 100-char body preview)
                                │
                                ├── spam      →  added to list  [yellow spam]
                                ├── phishing  →  added to list  [red phishing email]
@@ -297,9 +305,9 @@ python main.py
 - [x] API key manager with tick-to-select, masked input, show/hide, and connection test
 
 ### Phase 3 — Browser-based unsubscribe fallback (Playwright)
-- [ ] Load `List-Unsubscribe` URL in headless Chromium after POST/GET fails
-- [ ] Detect and click the unsubscribe button automatically
-- [ ] Handle confirmation pages that require a second click
+- [x] Load `List-Unsubscribe` URL in headless Chromium after POST/GET fails
+- [x] AI reads the page DOM and identifies the correct unsubscribe button to click
+- [x] Handle confirmation pages that require a second click
 
 ### Phase 4 — Multi-provider support
 - [ ] Outlook / Hotmail via Microsoft OAuth2 + Graph API
