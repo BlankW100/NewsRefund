@@ -13,9 +13,13 @@ METADATA_HEADERS = [
     "List-Unsubscribe",
     "List-Unsubscribe-Post",
     "List-Id",
+    "List-Archive",
+    "List-Help",
+    "List-Post",
     "Precedence",
-    "X-Mailer",
-    "X-Campaign",
+    "Feedback-ID",
+    "X-Feedback-ID",
+    "Authentication-Results",
 ]
 
 

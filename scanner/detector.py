@@ -76,28 +76,84 @@ def _parse_sender(from_header: str) -> tuple[str, str, str]:
 # ── Newsletter scoring ────────────────────────────────────────────────────────
 
 _NEWSLETTER_FROM_PATTERNS = re.compile(
-    r"(noreply|no-reply|newsletter|news@|digest|weekly|daily|update|hello@|hi@|mailer|campaign)",
+    r"(noreply|no-reply|newsletter|news@|digest|weekly|daily|mailer|campaign)",
     re.IGNORECASE,
 )
+
+# Proprietary header prefixes injected by major ESPs into every bulk send.
+# Each prefix is owned by a specific platform — a sender cannot have these
+# headers without an active registered account on that ESP.
+_ESP_HEADER_PREFIXES = (
+    "x-mc-", "x-mailchimp-",  # Mailchimp
+    "x-sg-",                   # SendGrid
+    "x-klaviyo-",              # Klaviyo
+    "x-hubspot-", "x-hs-",    # HubSpot
+    "x-cm-",                   # Campaign Monitor
+    "x-brevo-", "x-mailin-",  # Brevo / Sendinblue
+    "x-mkt-",                  # Marketo
+    "x-roving-",               # Constant Contact
+    "x-ac-",                   # ActiveCampaign
+)
+
+
+def _has_esp_header(headers: dict[str, str]) -> bool:
+    return any(k.startswith(_ESP_HEADER_PREFIXES) for k in headers)
 
 
 def _newsletter_score(headers: dict[str, str]) -> int:
     score = 0
+
+    # RFC 2369 — mandated for all bulk senders by Gmail/Yahoo since Feb 2024
     if "list-unsubscribe" in headers:
         score += 3
+
+    # RFC 2919 — uniquely identifies a mailing list, no meaning in 1-to-1 email
     if "list-id" in headers:
         score += 2
-    if headers.get("precedence", "").lower() in ("bulk", "list", "junk"):
+
+    # Legacy bulk-mail priority signal, still set by most ESPs
+    if headers.get("precedence", "").lower() in ("bulk", "list"):
         score += 2
-    if "x-campaign" in headers or "x-mailer" in headers:
+
+    # Third-party ESP vouching — requires a real registered sending account
+    if "feedback-id" in headers or "x-feedback-id" in headers:
+        score += 2
+
+    # RFC 2369 compliance headers — only legitimate list operators include these
+    if "list-archive" in headers or "list-help" in headers:
         score += 1
+
+    # Announcement-only signal: sender explicitly disables replies to the list
+    if "no" in headers.get("list-post", "").lower():
+        score += 1
+
+    # ESP platform fingerprint — more specific than a generic x-campaign string
+    if _has_esp_header(headers):
+        score += 1
+
+    # Sender naming convention signals (tightened — removed update/hello/hi)
     if _NEWSLETTER_FROM_PATTERNS.search(headers.get("from", "")):
         score += 1
+
+    # Negative signals
+    # list-unsubscribe alone without any ESP backing suggests a faked header
+    if (
+        "list-unsubscribe" in headers
+        and "list-id" not in headers
+        and "feedback-id" not in headers
+        and "x-feedback-id" not in headers
+    ):
+        score -= 1
+
+    # precedence:junk is set by spam filters, not senders — penalise it
+    if headers.get("precedence", "").lower() == "junk":
+        score -= 1
+
     return score
 
 
 def _is_newsletter(headers: dict[str, str]) -> bool:
-    return _newsletter_score(headers) >= 2
+    return _newsletter_score(headers) >= 4
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
